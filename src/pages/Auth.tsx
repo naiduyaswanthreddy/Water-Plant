@@ -50,7 +50,7 @@ const Auth = () => {
               <Droplets className="h-8 w-8" />
             </div>
           </div>
-          <h1 className="text-3xl font-bold">Bottle Buddy HQ</h1>
+          <h1 className="text-3xl font-bold">Sri Venkateswara Water Plant</h1>
           <p className="text-muted-foreground mt-2">Water delivery management system</p>
         </div>
 

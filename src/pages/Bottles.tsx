@@ -9,7 +9,7 @@ import { Badge } from '@/components/ui/badge';
 import { supabase } from '@/integrations/supabase/client';
 import { useLocation } from 'react-router-dom';
 import { useToast } from '@/hooks/use-toast';
-import { Plus, Search, Package, AlertCircle } from 'lucide-react';
+import { Plus, Search, Package, AlertCircle, Trash2 } from 'lucide-react';
 
 interface Bottle {
   id: string;
@@ -47,8 +47,14 @@ const Bottles = () => {
   const [filterStatus, setFilterStatus] = useState<'all' | 'out' | 'returned'>('all');
   const { toast } = useToast();
   const [pricing, setPricing] = useState<Array<{ id: string; bottle_type: 'normal' | 'cool'; customer_type: 'household' | 'shop' | 'function'; price: number }>>([]);
+  // Control bottle type for the add form because shadcn Select doesn't submit native form values
+  const [newBottleType, setNewBottleType] = useState<'normal' | 'cool'>('normal');
 
   const location = useLocation();
+
+  // Configurable caps for recent activity (avoid magic numbers in code)
+  const RECENT_TX_PER_BOTTLE = 5;
+  const MAX_INITIAL_TX = 500;
 
   useEffect(() => {
     fetchBottles();
@@ -61,6 +67,67 @@ const Bottles = () => {
       setFilterStatus(status as any);
     }
   }, [location.search]);
+
+  // Realtime updates for transactions and bottles
+  useEffect(() => {
+    // Subscribe to new/updated transactions to refresh recent activity in realtime
+    const txChannel = supabase
+      .channel('realtime-transactions')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'transactions' }, (payload: any) => {
+        const tx = payload.new as Transaction;
+        const nums = tx?.bottle_numbers || [];
+        if (!Array.isArray(nums) || nums.length === 0) return;
+        setRecentTxMap((prev) => {
+          const next = { ...prev };
+          for (const num of nums) {
+            const list = next[num] ? [tx, ...next[num]] : [tx];
+            // Deduplicate by id and cap list size
+            const seen = new Set<string>();
+            const deduped: Transaction[] = [];
+            for (const t of list) {
+              if (!seen.has(t.id)) {
+                seen.add(t.id);
+                deduped.push(t);
+              }
+              if (deduped.length >= RECENT_TX_PER_BOTTLE) break;
+            }
+            next[num] = deduped;
+          }
+          return next;
+        });
+      })
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'transactions' }, (payload: any) => {
+        const tx = payload.new as Transaction;
+        const nums = tx?.bottle_numbers || [];
+        if (!Array.isArray(nums) || nums.length === 0) return;
+        setRecentTxMap((prev) => {
+          const next = { ...prev };
+          for (const num of nums) {
+            const list = next[num] || [];
+            // Replace if exists, else prepend
+            const idx = list.findIndex((t) => t.id === tx.id);
+            if (idx >= 0) list[idx] = tx;
+            else list.unshift(tx);
+            next[num] = list.slice(0, RECENT_TX_PER_BOTTLE);
+          }
+          return next;
+        });
+      })
+      .subscribe();
+
+    // Subscribe to bottles changes to keep list in sync (assign/return/delete)
+    const bottlesChannel = supabase
+      .channel('realtime-bottles')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'bottles' }, () => {
+        fetchBottles();
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(txChannel);
+      supabase.removeChannel(bottlesChannel);
+    };
+  }, []);
 
   const fetchBottles = async () => {
     try {
@@ -85,13 +152,13 @@ const Bottles = () => {
           .select('*')
           .overlaps('bottle_numbers', numbers)
           .order('transaction_date', { ascending: false })
-          .limit(300);
+          .limit(MAX_INITIAL_TX);
         if (txErr) throw txErr;
         const map: Record<string, Transaction[]> = {};
         for (const tx of txs || []) {
           for (const num of tx.bottle_numbers || []) {
             if (!map[num]) map[num] = [];
-            if (map[num].length < 3) {
+            if (map[num].length < RECENT_TX_PER_BOTTLE) {
               map[num].push(tx as Transaction);
             }
           }
@@ -157,7 +224,8 @@ const Bottles = () => {
     e.preventDefault();
     
     const formData = new FormData(e.currentTarget);
-    const bottleType = formData.get('bottle_type') as string;
+    // Read from controlled state; shadcn Select doesn't populate FormData
+    const bottleType: 'normal' | 'cool' = newBottleType;
     const quantity = parseInt(formData.get('quantity') as string) || 1;
 
     try {
@@ -294,6 +362,32 @@ const Bottles = () => {
     }
   };
 
+  const handleDeleteBottle = async (bottleId: string) => {
+    try {
+      const bottle = bottles.find(b => b.id === bottleId);
+      if (!bottle) return;
+      if (!bottle.is_returned) {
+        toast({
+          variant: 'destructive',
+          title: 'Cannot delete',
+          description: 'Bottle is currently out for delivery. Mark it as returned before deleting.'
+        });
+        return;
+      }
+
+      const confirmed = window.confirm(`Delete bottle ${bottle.bottle_number}? This action cannot be undone.`);
+      if (!confirmed) return;
+
+      const { error } = await supabase.from('bottles').delete().eq('id', bottleId);
+      if (error) throw error;
+
+      toast({ title: 'Deleted', description: `Bottle ${bottle.bottle_number} was deleted.` });
+      fetchBottles();
+    } catch (error: any) {
+      toast({ variant: 'destructive', title: 'Error', description: error.message });
+    }
+  };
+
   const filteredBottles = bottles.filter(bottle => {
     const matchesSearch = bottle.bottle_number.toLowerCase().includes(searchTerm.toLowerCase()) ||
       bottle.customer?.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -360,7 +454,7 @@ const Bottles = () => {
             <form onSubmit={handleSubmit} className="space-y-4">
               <div>
                 <Label htmlFor="bottle_type">Bottle Type</Label>
-                <Select name="bottle_type" defaultValue="normal">
+                <Select value={newBottleType} onValueChange={(v: 'normal' | 'cool') => setNewBottleType(v)}>
                   <SelectTrigger>
                     <SelectValue placeholder="Select bottle type" />
                   </SelectTrigger>
@@ -471,13 +565,25 @@ const Bottles = () => {
                     </Badge>
                   </CardDescription>
                 </div>
-                <div className="flex gap-2">
+                <div className="flex gap-2 items-center">
                   {!bottle.is_returned && getFunctionBadge(bottle.bottle_number) && (
                     <Badge variant="secondary">{getFunctionBadge(bottle.bottle_number)}</Badge>
                   )}
                   <Badge variant={bottle.is_returned ? 'secondary' : 'destructive'}>
                     {bottle.is_returned ? 'In Stock' : 'Out'}
                   </Badge>
+                  {bottle.is_returned && (
+                    <Button
+                      variant="destructive"
+                      size="sm"
+                      className="h-8 w-8 p-0"
+                      title="Delete bottle"
+                      aria-label="Delete bottle"
+                      onClick={() => handleDeleteBottle(bottle.id)}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  )}
                 </div>
               </div>
             </CardHeader>

@@ -24,13 +24,18 @@ const MainLayout = () => {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
   const navigation = [
+    // 1. Dashboard
     { name: 'Dashboard', href: '/', icon: BarChart3 },
+    // 2. Delivery
+    { name: 'Delivery', href: '/delivery', icon: Truck },
+    // 3. Shop
+    { name: 'Shop', href: '/shop', icon: ShoppingCart },
+    // 4. Function Orders
+    { name: 'Function Orders', href: '/function-orders', icon: Calendar },
+    // Continue with the rest in original relative order
     { name: 'Customers', href: '/customers', icon: Users },
     { name: 'Bottles', href: '/bottles', icon: Package },
-    { name: 'Delivery', href: '/delivery', icon: Truck },
-    { name: 'Shop', href: '/shop', icon: ShoppingCart },
     { name: 'Transactions', href: '/transactions', icon: ShoppingCart },
-    { name: 'Function Orders', href: '/function-orders', icon: Calendar },
     { name: 'Pricing', href: '/pricing', icon: DollarSign },
     { name: 'Reports', href: '/reports', icon: BarChart3 },
     { name: 'Settings', href: '/settings', icon: Settings },
@@ -64,7 +69,7 @@ const MainLayout = () => {
               <Droplets className="h-6 w-6" />
             </div>
             <div>
-              <h1 className="text-lg font-semibold">Bottle Buddy HQ</h1>
+              <h1 className="text-lg font-semibold">Sri Venkateswara Water Plant</h1>
               <p className="text-sm text-muted-foreground">Water Management</p>
             </div>
           </div>
