@@ -2,19 +2,20 @@
   "name": "Bottle Buddy HQ",
   "short_name": "BottleBuddy",
   "start_url": "/",
+  "scope": "/",
   "display": "standalone",
   "background_color": "#e0f2fe",
   "theme_color": "#0284c7",
   "description": "Water delivery and bottle management PWA",
   "icons": [
     {
-      "src": "/icons/icon-192.png",
+      "src": "/water-drops.png",
       "sizes": "192x192",
       "type": "image/png",
       "purpose": "any maskable"
     },
     {
-      "src": "/icons/icon-512.png",
+      "src": "/water-drops.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "any maskable"
