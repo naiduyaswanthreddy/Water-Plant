@@ -8,51 +8,62 @@ All colors MUST be HSL.
 
 @layer base {
   :root {
-    /* Ocean blue theme (light) */
-    --background: 0 0% 100%;
-    --foreground: 220 24% 12%;
+    /* Ocean Blue Theme (Light) */
+    /* Page background: Light Aqua Mist (#e6faff) */
+    --background: 192 100% 95%;
+    /* Base foreground text */
+    --foreground: 215 19% 34%;
 
+    /* Card backgrounds: white by default */
     --card: 0 0% 100%;
-    --card-foreground: 220 24% 12%;
+    --card-foreground: 215 19% 34%;
 
+    /* Popover surfaces */
     --popover: 0 0% 100%;
-    --popover-foreground: 220 24% 12%;
+    --popover-foreground: 215 19% 34%;
 
-    /* Primary ocean blue: approx tailwind sky-600 */
-    --primary: 204 88% 36%;
+    /* Primary: Deep Ocean Blue (#005f99) */
+    --primary: 203 100% 30%;
     --primary-foreground: 210 40% 98%;
 
-    /* Secondary: light sky */
-    --secondary: 200 100% 95%;
-    --secondary-foreground: 204 88% 20%;
+    /* Secondary: Aqua Cyan (#00c2cc) */
+    --secondary: 183 100% 40%;
+    --secondary-foreground: 210 40% 98%;
 
-    --muted: 200 40% 96%;
-    --muted-foreground: 210 24% 40%;
+    /* Muted/neutral text and surfaces */
+    --muted: 196 100% 97%;
+    --muted-foreground: 215 19% 34%;
 
-    --accent: 199 90% 92%;
-    --accent-foreground: 204 88% 20%;
+    /* Accent (CTA highlights): Coral (#ff6b6b) used as accent bg when needed */
+    --accent: 0 100% 71%;
+    --accent-foreground: 0 0% 100%;
 
-    --destructive: 0 84% 60%;
+    /* Destructive: Red Coral (#ef4444) */
+    --destructive: 0 84% 63%;
     --destructive-foreground: 0 0% 100%;
 
-    --border: 204 32% 88%;
-    --input: 204 32% 88%;
-    --ring: 204 88% 36%;
+    /* Borders: Soft Sky Blue (#cce7f0) */
+    --border: 195 55% 87%;
+    --input: 195 55% 87%;
+    /* Focus ring: use primary */
+    --ring: 203 100% 30%;
 
-    --radius: 0.5rem;
+    /* Radius for large rounded cards */
+    --radius: 1rem;
 
-    --sidebar-background: 200 100% 98%;
-    --sidebar-foreground: 204 36% 20%;
-    --sidebar-primary: 204 88% 36%;
+    /* Sidebar palette aligned to Ocean Blue */
+    --sidebar-background: 192 100% 95%;
+    --sidebar-foreground: 215 19% 34%;
+    --sidebar-primary: 203 100% 30%;
     --sidebar-primary-foreground: 210 40% 98%;
-    --sidebar-accent: 199 90% 92%;
-    --sidebar-accent-foreground: 204 36% 20%;
-    --sidebar-border: 204 32% 88%;
-    --sidebar-ring: 204 88% 36%;
+    --sidebar-accent: 196 100% 97%;
+    --sidebar-accent-foreground: 215 19% 34%;
+    --sidebar-border: 195 55% 87%;
+    --sidebar-ring: 203 100% 30%;
   }
 
   .dark {
-    /* Ocean blue theme (dark) */
+    /* Ocean Blue Theme (Dark) */
     --background: 214 50% 10%;
     --foreground: 210 40% 96%;
 
@@ -62,32 +73,33 @@ All colors MUST be HSL.
     --popover: 214 50% 12%;
     --popover-foreground: 210 40% 96%;
 
-    --primary: 199 89% 48%; /* sky-500 */
+    /* Slightly brighter ocean for dark */
+    --primary: 203 100% 40%;
     --primary-foreground: 210 40% 98%;
 
-    --secondary: 214 36% 18%;
-    --secondary-foreground: 210 40% 96%;
+    --secondary: 183 100% 40%;
+    --secondary-foreground: 210 40% 98%;
 
     --muted: 214 36% 18%;
     --muted-foreground: 210 20% 70%;
 
-    --accent: 199 90% 22%;
-    --accent-foreground: 210 40% 96%;
+    --accent: 0 100% 71%;
+    --accent-foreground: 0 0% 100%;
 
-    --destructive: 0 62% 40%;
+    --destructive: 0 72% 50%;
     --destructive-foreground: 210 40% 96%;
 
     --border: 214 32% 24%;
     --input: 214 32% 24%;
-    --ring: 199 89% 48%;
+    --ring: 203 100% 40%;
     --sidebar-background: 214 50% 10%;
     --sidebar-foreground: 210 40% 96%;
-    --sidebar-primary: 199 89% 48%;
+    --sidebar-primary: 203 100% 40%;
     --sidebar-primary-foreground: 210 40% 98%;
     --sidebar-accent: 214 36% 18%;
     --sidebar-accent-foreground: 210 40% 96%;
     --sidebar-border: 214 36% 18%;
-    --sidebar-ring: 199 89% 48%;
+    --sidebar-ring: 203 100% 40%;
   }
 }
 

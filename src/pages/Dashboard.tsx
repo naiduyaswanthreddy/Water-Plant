@@ -190,20 +190,27 @@ const Dashboard = () => {
         {statCards.map((stat, index) => {
           const Icon = stat.icon;
           return (
-            <Card key={index} onClick={() => {
-              if (stat.title === 'Bottles Out') {
-                navigate('/bottles?status=out');
+            <Card
+              key={index}
+              onClick={() => {
+                if (stat.title === 'Bottles Out') {
+                  navigate('/bottles?status=out');
+                }
+              }}
+              className={
+                'rounded-xl border-0 bg-gradient-to-r from-[#005f99] to-[#00c2cc] text-white shadow-lg transition hover:shadow-xl ' +
+                (stat.title === 'Bottles Out' ? 'cursor-pointer' : '')
               }
-            }} className={stat.title === 'Bottles Out' ? 'cursor-pointer hover:bg-muted/40 transition' : ''}>
+            >
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">
+                <CardTitle className="text-sm font-medium text-white/90">
                   {stat.title}
                 </CardTitle>
-                <Icon className={`h-4 w-4 ${stat.color}`} />
+                <Icon className="h-7 w-7 text-white/90" />
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold">{stat.value}</div>
-                <p className="text-xs text-muted-foreground">
+                <div className="text-3xl font-bold">{stat.value}</div>
+                <p className="text-xs text-white/80">
                   {stat.description}
                 </p>
               </CardContent>
@@ -212,53 +219,7 @@ const Dashboard = () => {
         })}
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2">
-        <Card>
-          <CardHeader>
-            <CardTitle>Quick Actions</CardTitle>
-            <CardDescription>Common tasks for today</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-2">
-              <div className="flex justify-between items-center p-2 rounded bg-muted/50">
-                <span className="text-sm">New Customer Registration</span>
-                <span className="text-xs text-muted-foreground">Available</span>
-              </div>
-              <div className="flex justify-between items-center p-2 rounded bg-muted/50">
-                <span className="text-sm">Start Delivery Route</span>
-                <span className="text-xs text-muted-foreground">Ready</span>
-              </div>
-              <div className="flex justify-between items-center p-2 rounded bg-muted/50">
-                <span className="text-sm">Process Returns</span>
-                <span className="text-xs text-muted-foreground">Pending</span>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>Recent Activity</CardTitle>
-            <CardDescription>Latest system activity</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-2">
-              <div className="flex justify-between items-center p-2 rounded bg-muted/50">
-                <span className="text-sm">Payment received from PIN 1234</span>
-                <span className="text-xs text-muted-foreground">2 min ago</span>
-              </div>
-              <div className="flex justify-between items-center p-2 rounded bg-muted/50">
-                <span className="text-sm">5 bottles delivered to Route 1</span>
-                <span className="text-xs text-muted-foreground">15 min ago</span>
-              </div>
-              <div className="flex justify-between items-center p-2 rounded bg-muted/50">
-                <span className="text-sm">New customer registered</span>
-                <span className="text-xs text-muted-foreground">1 hour ago</span>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
+      
     </div>
   );
 };

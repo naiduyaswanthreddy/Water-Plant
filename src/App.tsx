@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes as ReactRoutes, Route, Navigate } from "react-router-dom";
 import { AuthProvider, useAuth } from "@/hooks/useAuth";
 import MainLayout from "@/components/Layout/MainLayout";
+import PinGate from "@/components/PinGate";
 import Dashboard from "./pages/Dashboard";
 import Customers from "./pages/Customers";
 import Bottles from "./pages/Bottles";
@@ -47,7 +48,9 @@ const App = () => (
             <Route path="/auth" element={<Auth />} />
             <Route path="/" element={
               <ProtectedRoute>
-                <MainLayout />
+                <PinGate>
+                  <MainLayout />
+                </PinGate>
               </ProtectedRoute>
             }>
               <Route index element={<Dashboard />} />

@@ -9,10 +9,14 @@ const buttonVariants = cva(
   {
     variants: {
       variant: {
-        default: "bg-primary text-primary-foreground hover:bg-primary/90",
-        destructive: "bg-destructive text-destructive-foreground hover:bg-destructive/90",
-        outline: "border border-input bg-background hover:bg-accent hover:text-accent-foreground",
-        secondary: "bg-secondary text-secondary-foreground hover:bg-secondary/80",
+        // Primary = solid ocean blue (#005f99) hover navy (#004466)
+        default: "bg-[hsl(var(--primary))] text-primary-foreground hover:bg-[#004466]",
+        // Destructive = coral red (#ef4444) stronger hover
+        destructive: "bg-[hsl(var(--destructive))] text-destructive-foreground hover:bg-red-700",
+        // Outlined = for general outline buttons
+        outline: "border border-input bg-background hover:bg-muted/60",
+        // Secondary = outlined aqua (border/text aqua, hover light aqua mist)
+        secondary: "border border-[#00c2cc] text-[#00c2cc] hover:bg-[#e6faff]",
         ghost: "hover:bg-accent hover:text-accent-foreground",
         link: "text-primary underline-offset-4 hover:underline",
       },

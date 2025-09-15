@@ -1,27 +1,24 @@
-import { useState } from 'react';
 import { Outlet, Link, useLocation } from 'react-router-dom';
+import { Sheet, SheetClose, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui/sheet';
 import { Button } from '@/components/ui/button';
-import { Card } from '@/components/ui/card';
 import { useAuth } from '@/hooks/useAuth';
 import { 
-  Droplets, 
-  Users, 
-  Package, 
-  Truck, 
-  ShoppingCart, 
-  BarChart3, 
-  Settings, 
-  LogOut,
-  Menu,
-  X,
+  Droplets,
+  Users,
+  Package,
+  Truck,
+  ShoppingCart,
+  BarChart3,
+  Settings,
   Calendar,
-  DollarSign
+  DollarSign,
+  LogOut,
+  MoreHorizontal
 } from 'lucide-react';
 
 const MainLayout = () => {
   const { signOut } = useAuth();
   const location = useLocation();
-  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
   const navigation = [
     // 1. Dashboard
@@ -48,27 +45,22 @@ const MainLayout = () => {
     { name: 'Bottles', href: '/bottles', icon: Package },
   ];
 
+  // Remaining navigation items to show under "More"
+  const remainingNav = navigation.filter(
+    (item) => !bottomNav.some((bn) => bn.href === item.href)
+  );
+
   const handleSignOut = async () => {
     await signOut();
   };
 
   return (
     <div className="min-h-screen bg-background">
-      {/* Mobile menu button */}
-      <div className="lg:hidden fixed top-4 left-4 z-50">
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
-        >
-          {isMobileMenuOpen ? <X className="h-4 w-4" /> : <Menu className="h-4 w-4" />}
-        </Button>
-      </div>
+      {/* No hamburger on mobile; access pages via bottom More menu */}
+      <div className="hidden" />
 
-      {/* Sidebar */}
-      <div className={`fixed inset-y-0 left-0 z-40 w-64 bg-card border-r transform transition-transform duration-200 ease-in-out lg:translate-x-0 ${
-        isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full'
-      }`}>
+      {/* Sidebar (hidden off-canvas on mobile, visible on lg via tailwind) */}
+      <div className={`fixed inset-y-0 left-0 z-40 w-64 bg-card border-r transform transition-transform duration-200 ease-in-out lg:translate-x-0 -translate-x-full`}>
         <div className="flex flex-col h-full">
           {/* Logo */}
           <div className="flex items-center gap-2 p-6 border-b">
@@ -92,7 +84,6 @@ const MainLayout = () => {
                   <li key={item.name}>
                     <Link
                       to={item.href}
-                      onClick={() => setIsMobileMenuOpen(false)}
                       className={`flex items-center gap-3 px-3 py-2 rounded-lg transition-colors ${
                         isActive 
                           ? 'bg-primary text-primary-foreground' 
@@ -122,13 +113,7 @@ const MainLayout = () => {
         </div>
       </div>
 
-      {/* Mobile menu overlay */}
-      {isMobileMenuOpen && (
-        <div 
-          className="fixed inset-0 bg-black bg-opacity-50 z-30 lg:hidden"
-          onClick={() => setIsMobileMenuOpen(false)}
-        />
-      )}
+      {/* No mobile overlay since there is no hamburger menu */}
 
       {/* Main content */}
       <div className="lg:ml-64">
@@ -137,9 +122,9 @@ const MainLayout = () => {
         </main>
       </div>
 
-      {/* Bottom mobile nav */}
+      {/* Bottom mobile nav with More menu */}
       <nav className="lg:hidden fixed bottom-0 left-0 right-0 z-40 border-t bg-card/95 backdrop-blur supports-[backdrop-filter]:bg-card/75">
-        <ul className="grid grid-cols-4">
+        <ul className="grid grid-cols-5">
           {bottomNav.map((item) => {
             const isActive = location.pathname.startsWith(item.href);
             const Icon = item.icon;
@@ -157,6 +142,45 @@ const MainLayout = () => {
               </li>
             );
           })}
+          {/* More menu trigger */}
+          <li>
+            <Sheet>
+              <SheetTrigger asChild>
+                <button className="w-full flex flex-col items-center justify-center gap-1 py-2 text-xs text-muted-foreground">
+                  <MoreHorizontal className="h-5 w-5" />
+                  <span>More</span>
+                </button>
+              </SheetTrigger>
+              <SheetContent side="bottom" className="pb-8">
+                <SheetHeader>
+                  <SheetTitle>More</SheetTitle>
+                </SheetHeader>
+                <nav className="mt-4">
+                  <ul className="grid grid-cols-2 gap-2">
+                    {remainingNav.map((item) => {
+                      const Icon = item.icon;
+                      const isActive = location.pathname === item.href;
+                      return (
+                        <li key={item.name}>
+                          <SheetClose asChild>
+                            <Link
+                              to={item.href}
+                              className={`flex items-center gap-3 px-3 py-2 rounded-md border ${
+                                isActive ? 'border-primary text-primary' : 'border-transparent text-foreground hover:border-accent hover:bg-accent'
+                              }`}
+                            >
+                              <Icon className="h-5 w-5" />
+                              <span>{item.name}</span>
+                            </Link>
+                          </SheetClose>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </nav>
+              </SheetContent>
+            </Sheet>
+          </li>
         </ul>
       </nav>
     </div>

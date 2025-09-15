@@ -220,15 +220,16 @@ const Bottles = () => {
     }
   };
 
-  // Generate next unique numbers by type: 'c1','c2',... for cool; 'n1','n2',... for normal
+  // Generate next unique numbers by type (uppercase): 'C1','C2',... for cool; 'N1','N2',... for normal
   const generateNextBottleNumbers = (type: 'normal' | 'cool', count: number) => {
-    const prefix = type === 'cool' ? 'c' : 'n';
-    // Collect used indices for this prefix (case-insensitive)
+    const prefixLower = type === 'cool' ? 'c' : 'n';
+    const prefixUpper = type === 'cool' ? 'C' : 'N';
+    // Collect used indices for this prefix (case-insensitive, to support legacy lowercase numbers)
     const used = new Set<number>();
     for (const b of bottles) {
       const num = b.bottle_number?.toLowerCase() || '';
-      if (num.startsWith(prefix)) {
-        const idx = parseInt(num.slice(prefix.length), 10);
+      if (num.startsWith(prefixLower)) {
+        const idx = parseInt(num.slice(prefixLower.length), 10);
         if (!isNaN(idx) && idx > 0) used.add(idx);
       }
     }
@@ -236,7 +237,7 @@ const Bottles = () => {
     let i = 1;
     while (result.length < count) {
       if (!used.has(i)) {
-        result.push(`${prefix}${i}`);
+        result.push(`${prefixUpper}${i}`);
       }
       i++;
       // Safety cap to avoid infinite loop in pathological data

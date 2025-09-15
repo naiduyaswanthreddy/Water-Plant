@@ -12,6 +12,11 @@ const badgeVariants = cva(
         secondary: "border-transparent bg-secondary text-secondary-foreground hover:bg-secondary/80",
         destructive: "border-transparent bg-destructive text-destructive-foreground hover:bg-destructive/80",
         outline: "text-foreground",
+        // Ocean Blue status variants
+        info: "border-transparent bg-[#38bdf8] text-white",
+        success: "border-transparent bg-[#10b981] text-white",
+        warning: "border-transparent bg-[#f59e0b] text-white",
+        error: "border-transparent bg-[#ef4444] text-white",
       },
     },
     defaultVariants: {

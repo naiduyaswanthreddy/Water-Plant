@@ -114,35 +114,44 @@ const Reports = () => {
         </Button>
       </div>
 
-      <div className="grid md:grid-cols-4 gap-4 items-end">
-        <div>
-          <label className="text-sm text-muted-foreground">From</label>
-          <Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
-        </div>
-        <div>
-          <label className="text-sm text-muted-foreground">To</label>
-          <Input type="date" value={to} onChange={(e) => setTo(e.target.value)} />
-        </div>
-        <div>
-          <label className="text-sm text-muted-foreground">Type</label>
-          <Select value={type} onValueChange={(v: any) => setType(v)}>
-            <SelectTrigger>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All</SelectItem>
-              <SelectItem value="delivery">Delivery</SelectItem>
-              <SelectItem value="payment">Payment</SelectItem>
-              <SelectItem value="return">Return</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-        <div>
-          <Button className="w-full" onClick={fetchReport} disabled={loading}>
-            <Calendar className="h-4 w-4 mr-2" /> Apply
-          </Button>
-        </div>
-      </div>
+      {/* Filters Card */}
+      <Card>
+        <CardHeader className="pb-2 border-b border-sky-100">
+          <CardTitle className="text-base">Filters</CardTitle>
+          <CardDescription>Select a date range and transaction type</CardDescription>
+        </CardHeader>
+        <CardContent className="pt-4">
+          <div className="grid md:grid-cols-4 gap-4 items-end">
+            <div>
+              <label className="text-sm text-muted-foreground">From</label>
+              <Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
+            </div>
+            <div>
+              <label className="text-sm text-muted-foreground">To</label>
+              <Input type="date" value={to} onChange={(e) => setTo(e.target.value)} />
+            </div>
+            <div>
+              <label className="text-sm text-muted-foreground">Type</label>
+              <Select value={type} onValueChange={(v: any) => setType(v)}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All</SelectItem>
+                  <SelectItem value="delivery">Delivery</SelectItem>
+                  <SelectItem value="payment">Payment</SelectItem>
+                  <SelectItem value="return">Return</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Button className="w-full" onClick={fetchReport} disabled={loading}>
+                <Calendar className="h-4 w-4 mr-2" /> Apply
+              </Button>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
 
       <div className="grid md:grid-cols-4 gap-4">
         <Card>
@@ -185,8 +194,23 @@ const Reports = () => {
           ) : (
             <div className="space-y-2 max-h-[480px] overflow-auto">
               {txs.map(t => (
-                <div key={t.id} className="grid grid-cols-4 gap-2 border rounded p-2 text-sm items-center">
-                  <div className="font-medium capitalize">{t.transaction_type}</div>
+                <div
+                  key={t.id}
+                  className="grid grid-cols-4 gap-2 border border-sky-100 rounded-xl p-3 text-sm items-center bg-white"
+                >
+                  <div className="font-medium capitalize flex items-center gap-2">
+                    {/* Status badge for type */}
+                    <span className="hidden md:inline-block">
+                      {t.transaction_type === 'delivery' ? (
+                        <span className="inline-flex items-center rounded-full bg-[#38bdf8] text-white px-2 py-0.5 text-[10px] font-semibold">Delivery</span>
+                      ) : t.transaction_type === 'payment' ? (
+                        <span className="inline-flex items-center rounded-full bg-[#10b981] text-white px-2 py-0.5 text-[10px] font-semibold">Payment</span>
+                      ) : (
+                        <span className="inline-flex items-center rounded-full bg-[#f59e0b] text-white px-2 py-0.5 text-[10px] font-semibold">Return</span>
+                      )}
+                    </span>
+                    <span className="md:hidden">{t.transaction_type}</span>
+                  </div>
                   <div>{new Date(t.transaction_date).toLocaleString()}</div>
                   <div>{t.quantity ? `${t.quantity} bottle(s)` : '-'}</div>
                   <div>{typeof t.amount === 'number' ? `₹${t.amount.toFixed(2)}` : '-'}</div>
