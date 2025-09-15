@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { PageSkeleton } from '@/components/skeletons/PageSkeleton';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -464,14 +465,7 @@ const Bottles = () => {
   };
 
   if (loading) {
-    return (
-      <div className="space-y-6">
-        <div className="flex justify-between items-center">
-          <h1 className="text-3xl font-bold">Bottle Management</h1>
-        </div>
-        <div className="text-center py-12">Loading bottles...</div>
-      </div>
-    );
+    return <PageSkeleton showFilters cardCount={4} listRows={8} />;
   }
 
   return (

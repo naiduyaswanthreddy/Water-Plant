@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { PageSkeleton, ListSkeleton } from '@/components/skeletons/PageSkeleton';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -102,6 +103,10 @@ const Reports = () => {
     document.body.removeChild(link);
   };
 
+  if (loading && txs.length === 0) {
+    return <PageSkeleton showFilters cardCount={4} listRows={8} />;
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-center">
@@ -188,7 +193,7 @@ const Reports = () => {
         <CardHeader className="pb-2"><CardTitle className="text-base">Transactions</CardTitle></CardHeader>
         <CardContent>
           {loading ? (
-            <div className="py-8 text-center text-muted-foreground">Loading...</div>
+            <ListSkeleton rows={6} />
           ) : txs.length === 0 ? (
             <div className="py-8 text-center text-muted-foreground">No data for selected filters.</div>
           ) : (
