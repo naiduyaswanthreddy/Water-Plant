@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -9,6 +9,7 @@ import { Badge } from '@/components/ui/badge';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import { Plus, Search, Edit, Trash2 } from 'lucide-react';
+import { useAuth } from '@/hooks/useAuth';
 
 interface Customer {
   id: string;
@@ -35,16 +36,43 @@ const Customers = () => {
   const [txPage, setTxPage] = useState(0);
   const [txHasMore, setTxHasMore] = useState(true);
   const { toast } = useToast();
+  const { user } = useAuth();
+  // Address input state for add/edit dialog (to enable suggestions)
+  const [addressQuery, setAddressQuery] = useState('');
+  const addressOptions = useMemo(() => {
+    const set = new Set<string>();
+    for (const c of customers) {
+      if (c.address && c.address.trim()) set.add(c.address.trim());
+    }
+    return Array.from(set);
+  }, [customers]);
+  const filteredAddressSuggestions = useMemo(() => {
+    const q = addressQuery.trim().toLowerCase();
+    if (!q) return [] as string[];
+    return addressOptions.filter(a => a.toLowerCase().includes(q)).slice(0, 8);
+  }, [addressQuery, addressOptions]);
 
   useEffect(() => {
+    if (!user) return;
     fetchCustomers();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
+
+  // Sync address field when opening dialog or switching editing target
+  useEffect(() => {
+    if (isDialogOpen) {
+      setAddressQuery(editingCustomer?.address || '');
+    } else {
+      setAddressQuery('');
+    }
+  }, [isDialogOpen, editingCustomer]);
 
   const fetchCustomers = async () => {
     try {
       const { data, error } = await supabase
         .from('customers')
         .select('*')
+        .eq('owner_user_id', user!.id)
         .order('name');
 
       if (error) throw error;
@@ -79,6 +107,7 @@ const Customers = () => {
         .from('transactions')
         .select('*')
         .eq('customer_id', customerId)
+        .eq('owner_user_id', user!.id)
         .order('transaction_date', { ascending: false })
         .range(from, to);
       if (error) throw error;
@@ -115,6 +144,7 @@ const Customers = () => {
         payment_type,
         notes,
         transaction_date,
+        owner_user_id: user!.id,
       });
       if (error) throw error;
 
@@ -178,11 +208,12 @@ const Customers = () => {
         const pin = await generateUniquePin();
         
         const { error } = await supabase
-          .from('customers')
-          .insert({
-            ...customerData,
-            pin
-          });
+        .from('customers')
+        .insert({
+          ...customerData,
+          pin,
+          owner_user_id: user!.id
+        });
         
         if (error) throw error;
         
@@ -314,13 +345,32 @@ const Customers = () => {
                 </div>
               </div>
               
-              <div>
+              <div className="relative">
                 <Label htmlFor="address">Address</Label>
                 <Input
                   id="address"
                   name="address"
-                  defaultValue={editingCustomer?.address || ''}
+                  autoComplete="off"
+                  value={addressQuery}
+                  onChange={(e) => setAddressQuery(e.target.value)}
                 />
+                {filteredAddressSuggestions.length > 0 && (
+                  <div className="absolute z-50 mt-1 w-full border rounded bg-card shadow">
+                    <ul className="max-h-48 overflow-auto text-sm">
+                      {filteredAddressSuggestions.map((addr) => (
+                        <li key={addr}>
+                          <button
+                            type="button"
+                            className="w-full text-left px-3 py-2 hover:bg-accent hover:text-accent-foreground"
+                            onClick={() => setAddressQuery(addr)}
+                          >
+                            {addr}
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
               </div>
               
               <div className="grid grid-cols-2 gap-4">
@@ -333,7 +383,6 @@ const Customers = () => {
                     <SelectContent>
                       <SelectItem value="household">Household</SelectItem>
                       <SelectItem value="shop">Shop</SelectItem>
-                      <SelectItem value="function">Function/Event</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -372,8 +421,8 @@ const Customers = () => {
         </Dialog>
       </div>
 
-      <div className="flex gap-4 items-center">
-        <div className="relative flex-1 max-w-md">
+      <div className="flex flex-col md:flex-row gap-3 md:gap-4 items-stretch md:items-center">
+        <div className="relative flex-1 w-full md:max-w-md">
           <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground h-4 w-4" />
           <Input
             placeholder="Search customers by name, PIN, or phone..."
@@ -382,7 +431,7 @@ const Customers = () => {
             className="pl-10"
           />
         </div>
-        <div className="text-sm text-muted-foreground">
+        <div className="text-sm text-muted-foreground md:text-right">
           {filteredCustomers.length} of {customers.length} customers
         </div>
       </div>

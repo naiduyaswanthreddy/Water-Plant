@@ -10,6 +10,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import { Plus, Search, Receipt, TrendingUp, TrendingDown, DollarSign } from 'lucide-react';
+import { useAuth } from '@/hooks/useAuth';
 
 interface Transaction {
   id: string;
@@ -46,6 +47,7 @@ const Transactions = () => {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [filterType, setFilterType] = useState<string>('all');
   const { toast } = useToast();
+  const { user } = useAuth();
 
   // Local form state for auto amount preview
   const [formType, setFormType] = useState<'delivery' | 'payment' | 'return' | 'all' | string>('delivery');
@@ -54,8 +56,10 @@ const Transactions = () => {
   const [formQty, setFormQty] = useState<number>(0);
 
   useEffect(() => {
+    if (!user) return;
     fetchData();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
 
   // Compute preview amount for delivery/return
   const computePreviewAmount = (): number => {
@@ -72,9 +76,9 @@ const Transactions = () => {
   const fetchData = async () => {
     try {
       const [transactionsResult, customersResult, pricingResult] = await Promise.all([
-        supabase.from('transactions').select('*').order('transaction_date', { ascending: false }),
-        supabase.from('customers').select('id, name, pin, customer_type, balance').order('name'),
-        supabase.from('pricing').select('id, bottle_type, customer_type, price')
+        supabase.from('transactions').select('*').eq('owner_user_id', user!.id).order('transaction_date', { ascending: false }),
+        supabase.from('customers').select('id, name, pin, customer_type, balance').eq('owner_user_id', user!.id).order('name'),
+        supabase.from('pricing').select('id, bottle_type, customer_type, price').eq('owner_user_id', user!.id)
       ]);
 
       if (transactionsResult.error) throw transactionsResult.error;
@@ -137,7 +141,8 @@ const Transactions = () => {
       bottle_type,
       payment_type,
       notes,
-      transaction_date
+      transaction_date,
+      owner_user_id: user!.id,
     };
 
     try {

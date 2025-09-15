@@ -41,6 +41,13 @@ const MainLayout = () => {
     { name: 'Settings', href: '/settings', icon: Settings },
   ];
 
+  const bottomNav = [
+    { name: 'Delivery', href: '/delivery', icon: Truck },
+    { name: 'Shop', href: '/shop', icon: ShoppingCart },
+    { name: 'Customers', href: '/customers', icon: Users },
+    { name: 'Bottles', href: '/bottles', icon: Package },
+  ];
+
   const handleSignOut = async () => {
     await signOut();
   };
@@ -125,10 +132,33 @@ const MainLayout = () => {
 
       {/* Main content */}
       <div className="lg:ml-64">
-        <main className="p-4 lg:p-6">
+        <main className="p-4 lg:p-6 pb-24 lg:pb-6">
           <Outlet />
         </main>
       </div>
+
+      {/* Bottom mobile nav */}
+      <nav className="lg:hidden fixed bottom-0 left-0 right-0 z-40 border-t bg-card/95 backdrop-blur supports-[backdrop-filter]:bg-card/75">
+        <ul className="grid grid-cols-4">
+          {bottomNav.map((item) => {
+            const isActive = location.pathname.startsWith(item.href);
+            const Icon = item.icon;
+            return (
+              <li key={item.name}>
+                <Link
+                  to={item.href}
+                  className={`flex flex-col items-center justify-center gap-1 py-2 text-xs ${
+                    isActive ? 'text-primary' : 'text-muted-foreground'
+                  }`}
+                >
+                  <Icon className={`h-5 w-5 ${isActive ? '' : ''}`} />
+                  <span>{item.name}</span>
+                </Link>
+              </li>
+            );
+          })}
+        </ul>
+      </nav>
     </div>
   );
 };

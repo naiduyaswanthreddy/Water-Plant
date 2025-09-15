@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
+import { usePin } from '@/hooks/usePin';
 
 const LS_KEYS = {
   COMPANY_NAME: 'settings.company_name',
@@ -19,6 +20,10 @@ const Settings = () => {
   const [oneDeliveryPerDay, setOneDeliveryPerDay] = useState(true);
   const [exporting, setExporting] = useState(false);
   const { toast } = useToast();
+  const { hasPin, setPin, clearPin, verifyPin } = usePin();
+  const [newPin, setNewPin] = useState('');
+  const [confirmPin, setConfirmPin] = useState('');
+  const [currentPin, setCurrentPin] = useState('');
 
   useEffect(() => {
     setCompanyName(localStorage.getItem(LS_KEYS.COMPANY_NAME) || '');
@@ -115,11 +120,105 @@ const Settings = () => {
 
       <Card>
         <CardHeader className="pb-2">
+          <CardTitle className="text-base">Security PIN</CardTitle>
+          <CardDescription>Require a PIN to open the app</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="text-sm">
+            <span className="text-muted-foreground">Current status: </span>
+            <span className={hasPin ? 'text-green-600' : 'text-red-600'}>
+              {hasPin ? 'PIN set' : 'No PIN set'}
+            </span>
+          </div>
+
+          {hasPin && (
+            <div>
+              <Label htmlFor="current_pin">Current PIN</Label>
+              <Input
+                id="current_pin"
+                type="password"
+                inputMode="numeric"
+                placeholder="Enter current PIN"
+                value={currentPin}
+                onChange={(e) => setCurrentPin(e.target.value)}
+              />
+              <div className="text-xs text-muted-foreground mt-1">For your security, the current PIN cannot be displayed.</div>
+            </div>
+          )}
+          <div>
+            <Label htmlFor="new_pin">New PIN</Label>
+            <Input
+              id="new_pin"
+              type="password"
+              inputMode="numeric"
+              placeholder="Enter new PIN"
+              value={newPin}
+              onChange={(e) => setNewPin(e.target.value)}
+            />
+          </div>
+          <div>
+            <Label htmlFor="confirm_pin">Confirm PIN</Label>
+            <Input
+              id="confirm_pin"
+              type="password"
+              inputMode="numeric"
+              placeholder="Confirm new PIN"
+              value={confirmPin}
+              onChange={(e) => setConfirmPin(e.target.value)}
+            />
+          </div>
+          <Button
+            onClick={async () => {
+              if (newPin.length < 4) {
+                toast({ variant: 'destructive', title: 'PIN too short', description: 'Use at least 4 digits.' });
+                return;
+              }
+              if (newPin !== confirmPin) {
+                toast({ variant: 'destructive', title: 'PIN mismatch', description: 'Both PINs must match.' });
+                return;
+              }
+              if (hasPin) {
+                const ok = await verifyPin(currentPin);
+                if (!ok) {
+                  toast({ variant: 'destructive', title: 'Incorrect current PIN', description: 'Please enter the correct current PIN.' });
+                  return;
+                }
+              }
+              await setPin(newPin);
+              setCurrentPin('');
+              setNewPin('');
+              setConfirmPin('');
+              toast({ title: hasPin ? 'PIN updated' : 'PIN set' });
+            }}
+          >
+            {hasPin ? 'Update PIN' : 'Set PIN'}
+          </Button>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="pb-2">
           <CardTitle className="text-base">Data Backup</CardTitle>
           <CardDescription>Export your key data as JSON</CardDescription>
         </CardHeader>
         <CardContent>
-          <Button onClick={exportJson} disabled={exporting}>Export JSON</Button>
+          <div className="flex gap-2">
+            <Button onClick={exportJson} disabled={exporting}>Export JSON</Button>
+            <Button
+              variant="outline"
+              onClick={async () => {
+                try {
+                  const { error } = await (supabase as any).rpc('claim_all_rows_for_current_user');
+                  if (error) throw error;
+                  toast({ title: 'Claimed', description: 'All unowned rows were claimed to your account.' });
+                } catch (err: any) {
+                  toast({ variant: 'destructive', title: 'Error', description: err.message });
+                }
+              }}
+            >
+              Claim Data
+            </Button>
+          </div>
         </CardContent>
       </Card>
     </div>

@@ -10,6 +10,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useLocation } from 'react-router-dom';
 import { useToast } from '@/hooks/use-toast';
 import { Plus, Search, Package, AlertCircle, Trash2 } from 'lucide-react';
+import { useAuth } from '@/hooks/useAuth';
 
 interface Bottle {
   id: string;
@@ -18,6 +19,7 @@ interface Bottle {
   current_customer_id?: string;
   is_returned: boolean;
   created_at: string;
+  notes?: string | null;
   customer?: {
     name: string;
     pin: string;
@@ -44,11 +46,13 @@ const Bottles = () => {
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [notesDraft, setNotesDraft] = useState<Record<string, string>>({});
   const [filterStatus, setFilterStatus] = useState<'all' | 'out' | 'returned'>('all');
   const { toast } = useToast();
   const [pricing, setPricing] = useState<Array<{ id: string; bottle_type: 'normal' | 'cool'; customer_type: 'household' | 'shop' | 'function'; price: number }>>([]);
   // Control bottle type for the add form because shadcn Select doesn't submit native form values
   const [newBottleType, setNewBottleType] = useState<'normal' | 'cool'>('normal');
+  const { user } = useAuth();
 
   const location = useLocation();
 
@@ -57,6 +61,7 @@ const Bottles = () => {
   const MAX_INITIAL_TX = 500;
 
   useEffect(() => {
+    if (!user) return;
     fetchBottles();
     fetchCustomers();
     fetchPricing();
@@ -66,7 +71,8 @@ const Bottles = () => {
     if (status === 'out' || status === 'returned' || status === 'all') {
       setFilterStatus(status as any);
     }
-  }, [location.search]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.search, user?.id]);
 
   // Realtime updates for transactions and bottles
   useEffect(() => {
@@ -140,16 +146,24 @@ const Bottles = () => {
             pin
           )
         `)
+        .eq('owner_user_id', user!.id)
         .order('bottle_number');
 
       if (error) throw error;
       setBottles(data || []);
+      // initialize drafts for notes to current value
+      const draft: Record<string, string> = {};
+      for (const b of (data || [])) {
+        draft[b.id] = (b as any).notes || '';
+      }
+      setNotesDraft(draft);
       // After bottles load, fetch recent transactions for these bottles
       const numbers = (data || []).map((b: any) => b.bottle_number);
       if (numbers.length > 0) {
         const { data: txs, error: txErr } = await supabase
           .from('transactions')
           .select('*')
+          .eq('owner_user_id', user!.id)
           .overlaps('bottle_numbers', numbers)
           .order('transaction_date', { ascending: false })
           .limit(MAX_INITIAL_TX);
@@ -182,7 +196,8 @@ const Bottles = () => {
     try {
       const { data, error } = await supabase
         .from('pricing')
-        .select('id, bottle_type, customer_type, price');
+        .select('id, bottle_type, customer_type, price')
+        .eq('owner_user_id', user!.id);
       if (error) throw error;
       setPricing(data || []);
     } catch (error) {
@@ -195,6 +210,7 @@ const Bottles = () => {
       const { data, error } = await supabase
         .from('customers')
         .select('id, name, pin, customer_type, balance')
+        .eq('owner_user_id', user!.id)
         .order('name');
 
       if (error) throw error;
@@ -204,20 +220,30 @@ const Bottles = () => {
     }
   };
 
-  // Generate up to `count` unique 2-digit bottle numbers (B00 - B99) that are not already used
-  const generateTwoDigitBottleNumbers = (count: number) => {
-    const existing = new Set(bottles.map((b) => b.bottle_number));
-    const all = Array.from({ length: 100 }, (_, i) => `B${i.toString().padStart(2, '0')}`);
-    const available = all.filter((n) => !existing.has(n));
-    if (available.length < count) {
-      return { ok: false as const, numbers: [] as string[], available: available.length };
+  // Generate next unique numbers by type: 'c1','c2',... for cool; 'n1','n2',... for normal
+  const generateNextBottleNumbers = (type: 'normal' | 'cool', count: number) => {
+    const prefix = type === 'cool' ? 'c' : 'n';
+    // Collect used indices for this prefix (case-insensitive)
+    const used = new Set<number>();
+    for (const b of bottles) {
+      const num = b.bottle_number?.toLowerCase() || '';
+      if (num.startsWith(prefix)) {
+        const idx = parseInt(num.slice(prefix.length), 10);
+        if (!isNaN(idx) && idx > 0) used.add(idx);
+      }
     }
-    // Simple selection: take first N after shuffling for distribution
-    for (let i = available.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [available[i], available[j]] = [available[j], available[i]];
+    const result: string[] = [];
+    let i = 1;
+    while (result.length < count) {
+      if (!used.has(i)) {
+        result.push(`${prefix}${i}`);
+      }
+      i++;
+      // Safety cap to avoid infinite loop in pathological data
+      if (i > 100000) break;
     }
-    return { ok: true as const, numbers: available.slice(0, count), available: available.length };
+    const ok = result.length === count;
+    return { ok: ok as const, numbers: result, available: result.length };
   };
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
@@ -229,13 +255,13 @@ const Bottles = () => {
     const quantity = parseInt(formData.get('quantity') as string) || 1;
 
     try {
-      // Create multiple bottles based on quantity with 2-digit numbers
-      const gen = generateTwoDigitBottleNumbers(quantity);
+      // Create multiple bottles based on quantity with type-based prefixes
+      const gen = generateNextBottleNumbers(bottleType, quantity);
       if (!gen.ok) {
         toast({
           variant: "destructive",
           title: "Not enough numbers",
-          description: `Only ${gen.available} unique 2-digit bottle numbers available (B00-B99). Reduce quantity or free up numbers.`,
+          description: `Only ${gen.available} new bottle numbers available for type "${bottleType}". Reduce quantity or free up numbers.`,
         });
         return;
       }
@@ -243,6 +269,7 @@ const Bottles = () => {
         bottle_number: num,
         bottle_type: bottleType,
         is_returned: true,
+        owner_user_id: user!.id,
       }));
 
       const { error } = await supabase
@@ -297,7 +324,8 @@ const Bottles = () => {
           bottle_type: bottle?.bottle_type || null,
           amount,
           transaction_date: new Date().toISOString(),
-          notes: 'Assigned from Bottles page'
+          notes: 'Assigned from Bottles page',
+          owner_user_id: user!.id,
         });
         // Update balance
         if (customer) {
@@ -343,7 +371,8 @@ const Bottles = () => {
           bottle_numbers: bottleNum,
           bottle_type: bottle?.bottle_type || null,
           transaction_date: new Date().toISOString(),
-          notes: 'Returned via Bottles page'
+          notes: 'Returned via Bottles page',
+          owner_user_id: user!.id,
         });
       }
 
@@ -383,6 +412,22 @@ const Bottles = () => {
 
       toast({ title: 'Deleted', description: `Bottle ${bottle.bottle_number} was deleted.` });
       fetchBottles();
+    } catch (error: any) {
+      toast({ variant: 'destructive', title: 'Error', description: error.message });
+    }
+  };
+
+  // Save per-bottle notes
+  const handleSaveNotes = async (bottleId: string) => {
+    try {
+      const note = notesDraft[bottleId] || null;
+      const { error } = await supabase
+        .from('bottles')
+        .update({ notes: note })
+        .eq('id', bottleId);
+      if (error) throw error;
+      toast({ title: 'Saved', description: 'Notes updated for bottle' });
+      setBottles(prev => prev.map(b => (b.id === bottleId ? { ...b, notes: note } : b)));
     } catch (error: any) {
       toast({ variant: 'destructive', title: 'Error', description: error.message });
     }
@@ -485,8 +530,8 @@ const Bottles = () => {
         </Dialog>
       </div>
 
-      {/* Stats Cards */}
-      <div className="grid gap-4 md:grid-cols-4">
+      {/* Stats Cards: 2x2 on mobile, 4 across on md+ */}
+      <div className="grid gap-4 grid-cols-2 md:grid-cols-4">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Total Bottles</CardTitle>
@@ -545,7 +590,7 @@ const Bottles = () => {
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All Bottles</SelectItem>
-            <SelectItem value="out">Out for Delivery</SelectItem>
+            <SelectItem value="out">Out Bottles</SelectItem>
             <SelectItem value="returned">In Stock</SelectItem>
           </SelectContent>
         </Select>
@@ -621,6 +666,20 @@ const Bottles = () => {
                       Mark as Returned
                     </Button>
                   )}
+                </div>
+
+                {/* Notes editor */}
+                <div className="space-y-1">
+                  <Label htmlFor={`notes_${bottle.id}`}>Notes</Label>
+                  <Input
+                    id={`notes_${bottle.id}`}
+                    value={notesDraft[bottle.id] ?? ''}
+                    onChange={(e) => setNotesDraft(prev => ({ ...prev, [bottle.id]: e.target.value }))}
+                    placeholder="Add remarks for this bottle"
+                  />
+                  <div className="flex justify-end">
+                    <Button variant="secondary" size="sm" onClick={() => handleSaveNotes(bottle.id)}>Save</Button>
+                  </div>
                 </div>
               </div>
             </CardContent>

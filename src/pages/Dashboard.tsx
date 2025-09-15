@@ -10,6 +10,7 @@ import {
   AlertTriangle 
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { useAuth } from '@/hooks/useAuth';
 
 interface DashboardStats {
   totalCustomers: number;
@@ -31,10 +32,13 @@ const Dashboard = () => {
   });
   const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
+  const { user } = useAuth();
 
   useEffect(() => {
+    if (!user) return;
     fetchDashboardStats();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
 
   const fetchDashboardStats = async () => {
     try {
@@ -43,26 +47,30 @@ const Dashboard = () => {
       // Get total customers
       const { count: customerCount } = await supabase
         .from('customers')
-        .select('*', { count: 'exact', head: true });
+        .select('id', { count: 'exact', head: true })
+        .eq('owner_user_id', user!.id);
 
       // Get bottles in circulation
       const { count: bottleCount } = await supabase
         .from('bottles')
-        .select('*', { count: 'exact', head: true })
+        .select('id', { count: 'exact', head: true })
+        .eq('owner_user_id', user!.id)
         .eq('is_returned', false);
 
       // Get today's deliveries
       const today = new Date().toISOString().split('T')[0];
       const { count: deliveryCount } = await supabase
         .from('transactions')
-        .select('*', { count: 'exact', head: true })
+        .select('id', { count: 'exact', head: true })
         .eq('transaction_type', 'delivery')
+        .eq('owner_user_id', user!.id)
         .gte('transaction_date', today);
 
       // Get pending balances
       const { data: balanceData } = await supabase
         .from('customers')
-        .select('balance');
+        .select('balance')
+        .eq('owner_user_id', user!.id);
       
       const totalBalance = balanceData?.reduce((sum, customer) => 
         sum + (parseFloat(customer.balance?.toString() || '0')), 0) || 0;
@@ -73,7 +81,8 @@ const Dashboard = () => {
       
       const { count: lostCount } = await supabase
         .from('bottles')
-        .select('*', { count: 'exact', head: true })
+        .select('id', { count: 'exact', head: true })
+        .eq('owner_user_id', user!.id)
         .eq('is_returned', false)
         .lt('created_at', weekAgo.toISOString());
 
@@ -82,6 +91,7 @@ const Dashboard = () => {
         .from('transactions')
         .select('amount')
         .eq('transaction_type', 'payment')
+        .eq('owner_user_id', user!.id)
         .gte('transaction_date', today);
 
       const todayRevenue = revenueData?.reduce((sum, transaction) => 

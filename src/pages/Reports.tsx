@@ -6,6 +6,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import { Download, Calendar, TrendingUp, TrendingDown, Wallet } from 'lucide-react';
+import { useAuth } from '@/hooks/useAuth';
 
 interface Transaction {
   id: string;
@@ -24,10 +25,13 @@ const Reports = () => {
   const [txs, setTxs] = useState<Transaction[]>([]);
   const [loading, setLoading] = useState(false);
   const { toast } = useToast();
+  const { user } = useAuth();
 
   useEffect(() => {
+    if (!user) return;
     fetchReport();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
 
   const fetchReport = async () => {
     setLoading(true);
@@ -37,6 +41,7 @@ const Reports = () => {
       let q = supabase
         .from('transactions')
         .select('*')
+        .eq('owner_user_id', user!.id)
         .gte('transaction_date', startISO)
         .lte('transaction_date', endISO)
         .order('transaction_date', { ascending: false });

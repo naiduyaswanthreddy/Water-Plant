@@ -9,6 +9,7 @@ import { Badge } from '@/components/ui/badge';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import { Plus, Search, Edit, Trash2, DollarSign } from 'lucide-react';
+import { useAuth } from '@/hooks/useAuth';
 
 interface Pricing {
   id: string;
@@ -28,21 +29,54 @@ const Pricing = () => {
   const [filterBottleType, setFilterBottleType] = useState<string>('all');
   const [filterCustomerType, setFilterCustomerType] = useState<string>('all');
   const { toast } = useToast();
+  const { user } = useAuth();
 
   useEffect(() => {
+    if (!user) return;
     fetchPricings();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
 
   const fetchPricings = async () => {
     try {
       const { data, error } = await supabase
         .from('pricing')
         .select('*')
+        .eq('owner_user_id', user!.id)
         .order('bottle_type')
         .order('customer_type');
 
       if (error) throw error;
-      setPricings(data || []);
+      const rows = data || [];
+      // Auto-seed defaults if none exist for this user
+      if (rows.length === 0) {
+        const defaults = [
+          { bottle_type: 'normal', customer_type: 'household', price: 20 },
+          { bottle_type: 'cool',   customer_type: 'household', price: 25 },
+          { bottle_type: 'normal', customer_type: 'shop',      price: 18 },
+          { bottle_type: 'cool',   customer_type: 'shop',      price: 23 },
+          { bottle_type: 'normal', customer_type: 'function',  price: 15 },
+          { bottle_type: 'cool',   customer_type: 'function',  price: 20 },
+        ] as const;
+        const { error: seedErr } = await supabase
+          .from('pricing')
+          .upsert(
+            defaults.map((d) => ({ ...d, owner_user_id: user!.id })) as any,
+            { onConflict: 'owner_user_id,bottle_type,customer_type', ignoreDuplicates: true }
+          );
+        if (seedErr) throw seedErr;
+        // Re-fetch after seeding
+        const seeded = await supabase
+          .from('pricing')
+          .select('*')
+          .eq('owner_user_id', user!.id)
+          .order('bottle_type')
+          .order('customer_type');
+        if (seeded.error) throw seeded.error;
+        setPricings(seeded.data || []);
+      } else {
+        setPricings(rows);
+      }
     } catch (error: any) {
       toast({
         variant: "destructive",
@@ -83,7 +117,8 @@ const Pricing = () => {
           .from('pricing')
           .select('id')
           .eq('bottle_type', pricingData.bottle_type)
-          .eq('customer_type', pricingData.customer_type);
+          .eq('customer_type', pricingData.customer_type)
+          .eq('owner_user_id', user!.id);
         
         if (existing && existing.length > 0) {
           toast({
@@ -96,7 +131,7 @@ const Pricing = () => {
         
         const { error } = await supabase
           .from('pricing')
-          .insert(pricingData);
+          .insert({ ...pricingData, owner_user_id: user!.id });
         
         if (error) throw error;
         
