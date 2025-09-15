@@ -591,7 +591,12 @@ const FunctionOrders = () => {
                     name="amount_paid"
                     type="number"
                     min="0"
+                    step="0.01"
+                    defaultValue={editingOrder?.amount_paid || ''}
+                  />
+                </div>
               </div>
+              )}
               
               <Button type="submit" className="w-full">
                 {editingOrder ? 'Update Order' : 'Create Order'}
