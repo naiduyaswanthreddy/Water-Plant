@@ -51,7 +51,6 @@ const Auth = () => {
             </div>
           </div>
           <h1 className="text-3xl font-bold">Sri Venkateswara Water Plant</h1>
-          <p className="text-muted-foreground mt-2">Water delivery management system</p>
         </div>
 
         <Card>

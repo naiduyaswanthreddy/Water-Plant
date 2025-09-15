@@ -228,7 +228,6 @@ const Pricing = () => {
       <div className="flex justify-between items-center">
         <div>
           <h1 className="text-3xl font-bold">Pricing</h1>
-          <p className="text-muted-foreground">Manage pricing for different bottle types and customer categories</p>
         </div>
         
         <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>

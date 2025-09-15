@@ -112,7 +112,6 @@ const Reports = () => {
       <div className="flex justify-between items-center">
         <div>
           <h1 className="text-3xl font-bold">Reports</h1>
-          <p className="text-muted-foreground">Analyze deliveries, returns, and payments</p>
         </div>
         <Button onClick={exportCSV} disabled={loading || txs.length === 0}>
           <Download className="h-4 w-4 mr-2" /> Export CSV

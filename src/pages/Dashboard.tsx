@@ -162,7 +162,6 @@ const Dashboard = () => {
       <div className="space-y-6">
         <div>
           <h1 className="text-3xl font-bold">Dashboard</h1>
-          <p className="text-muted-foreground">Overview of your water delivery business</p>
         </div>
         
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
@@ -183,7 +182,6 @@ const Dashboard = () => {
     <div className="space-y-6">
       <div>
         <h1 className="text-3xl font-bold">Dashboard</h1>
-        <p className="text-muted-foreground">Overview of your water delivery business</p>
       </div>
 
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">

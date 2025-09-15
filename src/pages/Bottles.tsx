@@ -473,7 +473,6 @@ const Bottles = () => {
       <div className="flex justify-between items-center">
         <div>
           <h1 className="text-3xl font-bold">Bottle Management</h1>
-          <p className="text-muted-foreground">Track and manage your water bottles</p>
         </div>
         
         <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>

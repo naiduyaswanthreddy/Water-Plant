@@ -3,7 +3,6 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
-import { Switch } from '@/components/ui/switch';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import { usePin } from '@/hooks/usePin';
@@ -11,13 +10,12 @@ import { usePin } from '@/hooks/usePin';
 const LS_KEYS = {
   COMPANY_NAME: 'settings.company_name',
   COMPANY_ADDRESS: 'settings.company_address',
-  ONE_DELIVERY_PER_DAY: 'settings.one_delivery_per_day',
+  
 };
 
 const Settings = () => {
   const [companyName, setCompanyName] = useState('');
   const [companyAddress, setCompanyAddress] = useState('');
-  const [oneDeliveryPerDay, setOneDeliveryPerDay] = useState(true);
   const [exporting, setExporting] = useState(false);
   const { toast } = useToast();
   const { hasPin, setPin, clearPin, verifyPin } = usePin();
@@ -28,7 +26,7 @@ const Settings = () => {
   useEffect(() => {
     setCompanyName(localStorage.getItem(LS_KEYS.COMPANY_NAME) || '');
     setCompanyAddress(localStorage.getItem(LS_KEYS.COMPANY_ADDRESS) || '');
-    setOneDeliveryPerDay((localStorage.getItem(LS_KEYS.ONE_DELIVERY_PER_DAY) || 'true') === 'true');
+    
   }, []);
 
   const saveCompany = () => {
@@ -37,10 +35,7 @@ const Settings = () => {
     toast({ title: 'Saved', description: 'Company settings updated' });
   };
 
-  const saveRules = () => {
-    localStorage.setItem(LS_KEYS.ONE_DELIVERY_PER_DAY, String(oneDeliveryPerDay));
-    toast({ title: 'Saved', description: 'Delivery rules updated' });
-  };
+  
 
   const exportJson = async () => {
     setExporting(true);
@@ -78,7 +73,6 @@ const Settings = () => {
     <div className="space-y-6">
       <div>
         <h1 className="text-3xl font-bold">Settings</h1>
-        <p className="text-muted-foreground">Manage company info, rules and data backup</p>
       </div>
 
       <div className="grid md:grid-cols-2 gap-4">
@@ -97,23 +91,6 @@ const Settings = () => {
               <Input id="company_address" value={companyAddress} onChange={(e) => setCompanyAddress(e.target.value)} />
             </div>
             <Button onClick={saveCompany}>Save</Button>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-base">Delivery Rules</CardTitle>
-            <CardDescription>Control key business rules</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <div className="flex items-center justify-between">
-              <div>
-                <div className="font-medium">One delivery per day (household)</div>
-                <div className="text-sm text-muted-foreground">Prevent multiple deliveries in a day; allow extras</div>
-              </div>
-              <Switch checked={oneDeliveryPerDay} onCheckedChange={setOneDeliveryPerDay} />
-            </div>
-            <Button onClick={saveRules}>Save</Button>
           </CardContent>
         </Card>
       </div>

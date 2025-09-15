@@ -404,7 +404,6 @@ const FunctionOrders = () => {
       <div className="flex justify-between items-center">
         <div>
           <h1 className="text-3xl font-bold">Function Orders</h1>
-          <p className="text-muted-foreground">Manage bulk orders for events and functions</p>
         </div>
         
         <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
@@ -414,7 +413,7 @@ const FunctionOrders = () => {
               Add Function Order
             </Button>
           </DialogTrigger>
-          <DialogContent className="max-w-2xl">
+          <DialogContent className="max-w-2xl max-h-[85vh] overflow-auto">
             <DialogHeader>
               <DialogTitle>
                 {editingOrder ? 'Edit Function Order' : 'Add New Function Order'}
@@ -436,7 +435,7 @@ const FunctionOrders = () => {
                   <div>
                     <Label htmlFor="customer_id">Customer *</Label>
                     <Select name="customer_id" defaultValue={editingOrder.customer_id} required>
-                      <SelectTrigger>
+                      <SelectTrigger className="bg-white">
                         <SelectValue placeholder="Select customer" />
                       </SelectTrigger>
                       <SelectContent>
@@ -451,8 +450,8 @@ const FunctionOrders = () => {
                 ) : (
                   <div className="space-y-2">
                     <Label>Function Customer</Label>
-                    <Input placeholder="Function name (required)" value={newFuncName} onChange={(e) => setNewFuncName(e.target.value)} required />
-                    <Input placeholder="Phone (optional)" value={newFuncPhone} onChange={(e) => setNewFuncPhone(e.target.value)} />
+                    <Input className="bg-white" placeholder="Function name (required)" value={newFuncName} onChange={(e) => setNewFuncName(e.target.value)} required />
+                    <Input className="bg-white" placeholder="Phone (optional)" value={newFuncPhone} onChange={(e) => setNewFuncPhone(e.target.value)} />
                   </div>
                 )}
                 <div>
@@ -462,6 +461,7 @@ const FunctionOrders = () => {
                     name="event_date"
                     type="date"
                     defaultValue={editingOrder?.event_date || ''}
+                    className="bg-white"
                   />
                 </div>
               </div>
@@ -474,6 +474,7 @@ const FunctionOrders = () => {
                   name="event_name"
                   defaultValue={editingOrder?.event_name || ''}
                   placeholder="Wedding, Birthday, Corporate Event, etc."
+                  className="bg-white"
                 />
               </div>
               )}
@@ -488,18 +489,22 @@ const FunctionOrders = () => {
                     type="number"
                     min="0"
                     defaultValue={editingOrder?.bottles_supplied || ''}
+                    className="bg-white"
                   />
                 </div>
-                <div>
-                  <Label htmlFor="bottles_returned">Bottles Returned</Label>
-                  <Input
-                    id="bottles_returned"
-                    name="bottles_returned"
-                    type="number"
-                    min="0"
-                    defaultValue={editingOrder?.bottles_returned || ''}
-                  />
-                </div>
+                {editingOrder && (
+                  <div>
+                    <Label htmlFor="bottles_returned">Bottles Returned</Label>
+                    <Input
+                      id="bottles_returned"
+                      name="bottles_returned"
+                      type="number"
+                      min="0"
+                      defaultValue={editingOrder?.bottles_returned || ''}
+                      className="bg-white"
+                    />
+                  </div>
+                )}
               </div>
               )}
 
@@ -575,6 +580,7 @@ const FunctionOrders = () => {
                     value={overrideTotal || ''}
                     onChange={(e) => setOverrideTotal(e.target.value)}
                     placeholder="Auto from bottles; editable"
+                    className="bg-white"
                   />
                   <div className="text-xs text-muted-foreground mt-1">Default: auto from selected bottles. You can edit this value.</div>
                 </div>
@@ -587,6 +593,7 @@ const FunctionOrders = () => {
                     min="0"
                     step="0.01"
                     defaultValue={editingOrder?.amount_paid || ''}
+                    className="bg-white"
                   />
                 </div>
               </div>

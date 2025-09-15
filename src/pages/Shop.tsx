@@ -301,7 +301,6 @@ const Shop = () => {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold">Shop</h1>
-          <p className="text-muted-foreground">Serve guests and customers with fills and bottle issuance</p>
         </div>
       </div>
 

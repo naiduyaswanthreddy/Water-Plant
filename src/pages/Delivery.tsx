@@ -370,7 +370,6 @@ const Delivery = () => {
       <div className="flex justify-between items-center">
         <div>
           <h1 className="text-3xl font-bold">Delivery</h1>
-          <p className="text-muted-foreground">Manage daily deliveries for household customers</p>
         </div>
       </div>
 
@@ -381,11 +380,8 @@ const Delivery = () => {
             placeholder="Search customers by name, PIN, or phone..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            className="pl-10"
+            className="pl-10 bg-white"
           />
-        </div>
-        <div className="text-sm text-muted-foreground">
-          {filteredCustomers.length} of {customers.length} household customers
         </div>
       </div>
 
@@ -489,12 +485,13 @@ const Delivery = () => {
                   min={1}
                   value={quantity}
                   onChange={(e) => setQuantity(Math.max(1, Number(e.target.value) || 1))}
+                  className="bg-white"
                 />
               </div>
               <div>
                 <Label htmlFor="bottle_type">Bottle Type</Label>
                 <Select value={bottleType} onValueChange={(v: 'normal' | 'cool') => setBottleType(v)}>
-                  <SelectTrigger>
+                  <SelectTrigger className="bg-white">
                     <SelectValue placeholder="Select type" />
                   </SelectTrigger>
                   <SelectContent>
@@ -509,7 +506,7 @@ const Delivery = () => {
               <div>
                 <Label>Mode</Label>
                 <Select value={mode} onValueChange={(v: 'handover' | 'fill_only') => { setMode(v); setSelectedBottleIds([]); }}>
-                  <SelectTrigger>
+                  <SelectTrigger className="bg-white">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -552,6 +549,7 @@ const Delivery = () => {
                 type="datetime-local"
                 value={date}
                 onChange={(e) => setDate(e.target.value)}
+                className="bg-white"
               />
             </div>
 

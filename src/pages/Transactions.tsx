@@ -220,7 +220,6 @@ const Transactions = () => {
       <div className="flex justify-between items-center">
         <div>
           <h1 className="text-3xl font-bold">Transactions</h1>
-          <p className="text-muted-foreground">Track all sales and payment records</p>
         </div>
         
         <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
@@ -230,7 +229,7 @@ const Transactions = () => {
               Record Transaction
             </Button>
           </DialogTrigger>
-          <DialogContent className="max-w-md">
+          <DialogContent className="max-w-md max-h-[85vh] overflow-auto">
             <DialogHeader>
               <DialogTitle>Record New Transaction</DialogTitle>
               <DialogDescription>
