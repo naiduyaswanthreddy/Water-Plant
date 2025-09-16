@@ -55,6 +55,7 @@ const Delivery = () => {
   const [withCustomer, setWithCustomer] = useState<Bottle[]>([]);
   const [yesterdayGiven, setYesterdayGiven] = useState<string[]>([]);
   const [returnBottleIds, setReturnBottleIds] = useState<string[]>([]);
+  const [amount, setAmount] = useState<number | ''>('');
   const [lastAction, setLastAction] = useState<
     | null
     | {
@@ -167,7 +168,14 @@ const Delivery = () => {
     if (txErr) throw txErr;
   };
 
-  const assignBottlesDelivery = async (cust: Customer, ids: string[], bt: 'normal' | 'cool', when: string, note?: string): Promise<{ transactionId: string; amount: number; numbers: string[]; }> => {
+  const assignBottlesDelivery = async (
+    cust: Customer,
+    ids: string[],
+    bt: 'normal' | 'cool',
+    when: string,
+    note?: string,
+    overrideAmount?: number
+  ): Promise<{ transactionId: string; amount: number; numbers: string[]; }> => {
     // Look up numbers from inStock/current lists
     const dict = new Map<string, Bottle>();
     for (const b of inStock) dict.set(b.id, b);
@@ -182,7 +190,7 @@ const Delivery = () => {
 
     // Insert transaction with bottle_numbers
     const unitPrice = householdPrices[bt] || 0;
-    const amount = unitPrice * numbers.length;
+    const amount = overrideAmount !== undefined ? overrideAmount : unitPrice * numbers.length;
     const { data: txIns, error: txErr } = await supabase.from('transactions').insert({
       customer_id: cust.id,
       transaction_type: 'delivery',
@@ -237,6 +245,7 @@ const Delivery = () => {
     setWithCustomer([]);
     setYesterdayGiven([]);
     setReturnBottleIds([]);
+    setAmount('');
   };
 
   const handleOpenDialog = async (type: 'given' | 'extra', customer: Customer) => {
@@ -285,7 +294,14 @@ const Delivery = () => {
     }
   };
 
-  const upsertDelivery = async (cust: Customer, qty: number, bt: 'normal' | 'cool', when: string, note?: string): Promise<{ transactionId: string; amount: number; } | null> => {
+  const upsertDelivery = async (
+    cust: Customer,
+    qty: number,
+    bt: 'normal' | 'cool',
+    when: string,
+    note?: string,
+    overrideAmount?: number
+  ): Promise<{ transactionId: string; amount: number; } | null> => {
     // Pricing check
     const unitPrice = householdPrices[bt];
     if (unitPrice === undefined) {
@@ -293,7 +309,7 @@ const Delivery = () => {
       return null;
     }
 
-    const amount = qty * unitPrice;
+    const amount = overrideAmount !== undefined ? overrideAmount : qty * unitPrice;
 
     // Insert transaction and update balance
     const { data: txIns, error: txErr } = await supabase.from('transactions').insert({
@@ -322,6 +338,7 @@ const Delivery = () => {
       if (returnBottleIds.length > 0) {
         await markReturns(activeCustomer, returnBottleIds, date);
       }
+      const effAmount = typeof amount === 'number' ? amount : undefined;
       if (mode === 'handover') {
         const filtered = inStock.filter(b => b.bottle_type === bottleType);
         let selected = selectedBottleIds.filter(id => filtered.some(b => b.id === id));
@@ -333,10 +350,10 @@ const Delivery = () => {
           toast({ variant: 'destructive', title: 'Select bottles', description: `Please select ${quantity} ${bottleType} bottle(s) to hand over.` });
           return;
         }
-        const result = await assignBottlesDelivery(activeCustomer, selected, bottleType, date);
+        const result = await assignBottlesDelivery(activeCustomer, selected, bottleType, date, undefined, effAmount);
         setLastAction({ used: false, kind: 'handover', customerId: activeCustomer.id, transactionId: result.transactionId, bottleIds: selected, amount: result.amount });
       } else {
-        const result = await upsertDelivery(activeCustomer, quantity, bottleType, date, 'Fill only (no bottle handover)');
+        const result = await upsertDelivery(activeCustomer, quantity, bottleType, date, 'Fill only (no bottle handover)', effAmount);
         if (!result) return; // pricing missing, already toasted
         setLastAction({ used: false, kind: 'fill_only', customerId: activeCustomer.id, transactionId: result.transactionId, amount: result.amount });
       }
@@ -387,6 +404,7 @@ const Delivery = () => {
       if (returnBottleIds.length > 0) {
         await markReturns(activeCustomer, returnBottleIds, date);
       }
+      const effAmount = typeof amount === 'number' ? amount : undefined;
       if (mode === 'handover') {
         // Validate selection count and assign bottles as extra
         const filtered = inStock.filter(b => b.bottle_type === bottleType);
@@ -399,11 +417,11 @@ const Delivery = () => {
           toast({ variant: 'destructive', title: 'Select bottles', description: `Please select ${quantity} ${bottleType} bottle(s) to hand over.` });
           return;
         }
-        const result = await assignBottlesDelivery(activeCustomer, selected, bottleType, date, 'Extra');
+        const result = await assignBottlesDelivery(activeCustomer, selected, bottleType, date, 'Extra', effAmount);
         setLastAction({ used: false, kind: 'extra_handover', customerId: activeCustomer.id, transactionId: result.transactionId, bottleIds: selected, amount: result.amount });
       } else {
         // Fill only extra delivery (no bottle handover)
-        const result = await upsertDelivery(activeCustomer, quantity, bottleType, date, 'Extra (fill only)');
+        const result = await upsertDelivery(activeCustomer, quantity, bottleType, date, 'Extra (fill only)', effAmount);
         if (!result) return; // pricing missing, already toasted
         setLastAction({ used: false, kind: 'extra_fill', customerId: activeCustomer.id, transactionId: result.transactionId, amount: result.amount });
       }
@@ -626,6 +644,21 @@ const Delivery = () => {
                 <div className="text-xs text-muted-foreground mt-1">Select exactly {quantity} bottle(s).</div>
               </div>
             )}
+
+            {/* Amount (editable) */}
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label htmlFor="amount">Amount (₹)</Label>
+                <Input
+                  id="amount"
+                  type="number"
+                  min={0}
+                  value={amount === '' ? (() => { const unit = householdPrices[bottleType] || 0; return unit * quantity; })() : amount}
+                  onChange={(e) => setAmount(e.target.value === '' ? '' : Number(e.target.value))}
+                  className="bg-white"
+                />
+              </div>
+            </div>
 
             <div>
               <Label htmlFor="date">Date & Time</Label>

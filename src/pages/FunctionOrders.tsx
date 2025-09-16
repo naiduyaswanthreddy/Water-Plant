@@ -483,24 +483,57 @@ const FunctionOrders = () => {
 
   const toggleSettled = async (orderId: string, currentStatus: boolean) => {
     try {
+      // If currently settled and clicking to mark pending, allow directly
+      if (currentStatus) {
+        const { error } = await supabase
+          .from('function_orders')
+          .update({ is_settled: false })
+          .eq('id', orderId);
+        if (error) throw error;
+        toast({ title: 'Success', description: 'Order marked as pending' });
+        fetchData();
+        return;
+      }
+
+      // Otherwise, attempting to mark settled: enforce rules
+      const { data: ord, error: getErr } = await supabase
+        .from('function_orders')
+        .select('id, bottles_supplied, bottles_returned, total_amount, amount_paid')
+        .eq('id', orderId)
+        .single();
+      if (getErr) throw getErr;
+
+      const supplied = (ord?.bottles_supplied || 0) as number;
+      const returned = (ord?.bottles_returned || 0) as number;
+      const balance = (ord?.total_amount || 0) - (ord?.amount_paid || 0);
+      const isBalanced = Math.abs(balance) < 0.005;
+      const allReturned = supplied === returned;
+
+      if (!allReturned || !isBalanced) {
+        const reasons: string[] = [];
+        if (!allReturned) reasons.push(`Bottles pending: ${Math.max(0, supplied - returned)}`);
+        if (!isBalanced) reasons.push(`Balance due: ₹${balance.toFixed(2)}`);
+        toast({
+          variant: 'destructive',
+          title: 'Cannot mark as settled',
+          description: reasons.join(' • ')
+        });
+        return;
+      }
+
       const { error } = await supabase
         .from('function_orders')
-        .update({ is_settled: !currentStatus })
+        .update({ is_settled: true })
         .eq('id', orderId);
-      
       if (error) throw error;
-      
-      toast({
-        title: "Success",
-        description: `Order ${!currentStatus ? 'marked as settled' : 'marked as pending'}`
-      });
-      
+
+      toast({ title: 'Success', description: 'Order marked as settled' });
       fetchData();
     } catch (error: any) {
       toast({
-        variant: "destructive",
-        title: "Error",
-        description: error.message
+        variant: 'destructive',
+        title: 'Error',
+        description: error.message,
       });
     }
   };
@@ -769,7 +802,7 @@ const FunctionOrders = () => {
                     type="number"
                     min="0"
                     step="0.01"
-                    value={overrideTotal || ''}
+                    value={(overrideTotal !== '' ? overrideTotal : String(calcTotal))}
                     onChange={(e) => setOverrideTotal(e.target.value)}
                     placeholder="Auto from bottles; editable"
                     className="bg-white"

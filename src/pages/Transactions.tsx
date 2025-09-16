@@ -16,11 +16,11 @@ import { useAuth } from '@/hooks/useAuth';
 interface Transaction {
   id: string;
   customer_id: string;
-  transaction_type: 'delivery' | 'payment' | 'return';
+  transaction_type: 'delivery' | 'payment' | 'return' | 'balance';
   quantity?: number;
   amount?: number;
   bottle_type?: 'normal' | 'cool';
-  payment_type?: 'cash' | 'online' | 'credit';
+  payment_type?: 'cash' | 'online' | 'credit' | 'not_paid';
   bottle_numbers?: string[];
   notes?: string;
   staff_id?: string;
@@ -51,10 +51,16 @@ const Transactions = () => {
   const { user } = useAuth();
 
   // Local form state for auto amount preview
-  const [formType, setFormType] = useState<'delivery' | 'payment' | 'return' | 'all' | string>('delivery');
+  const [formType, setFormType] = useState<'delivery' | 'payment' | 'return' | 'balance' | 'all' | string>('delivery');
   const [formCustomerId, setFormCustomerId] = useState<string>('');
   const [formBottleType, setFormBottleType] = useState<'normal' | 'cool' | ''>('');
   const [formQty, setFormQty] = useState<number>(0);
+  const [formDeliveryMode, setFormDeliveryMode] = useState<'bottle' | 'filling'>('bottle');
+  const [formAmount, setFormAmount] = useState<number | ''>('');
+  const [formPaymentType, setFormPaymentType] = useState<'cash' | 'online' | 'credit' | 'not_paid' | ''>('');
+  const [inStock, setInStock] = useState<Array<{ id: string; bottle_number: string; bottle_type: 'normal' | 'cool' }>>([]);
+  const [selectedBottleIds, setSelectedBottleIds] = useState<string[]>([]);
+  const [withCustomer, setWithCustomer] = useState<Array<{ id: string; bottle_number: string; bottle_type: 'normal' | 'cool' }>>([]);
 
   useEffect(() => {
     if (!user) return;
@@ -62,34 +68,64 @@ const Transactions = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]);
 
-  // Compute preview amount for delivery/return
+  // Load bottles currently with selected customer for Return
+  useEffect(() => {
+    const loadWithCustomer = async () => {
+      if (!user || !formCustomerId || formType !== 'return') {
+        setWithCustomer([]);
+        return;
+      }
+      const { data, error } = await supabase
+        .from('bottles')
+        .select('id, bottle_number, bottle_type')
+        .eq('owner_user_id', user.id)
+        .eq('current_customer_id', formCustomerId)
+        .eq('is_returned', false)
+        .order('bottle_number');
+      if (!error) setWithCustomer((data || []) as any);
+    };
+    loadWithCustomer();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id, formCustomerId, formType]);
+
+  // Compute preview amount for delivery/payment/balance (returns are zero)
   const computePreviewAmount = (): number => {
+    const customer = customers.find(c => c.id === formCustomerId);
     if (formType === 'delivery') {
-      const customer = customers.find(c => c.id === formCustomerId);
-      if (!customer || !formBottleType || !formQty) return 0;
-      const pr = pricing.find(p => p.customer_type === (customer.customer_type as any) && p.bottle_type === formBottleType);
-      return pr ? pr.price * formQty : 0;
+      if (formDeliveryMode === 'bottle') {
+        if (!customer || !formBottleType) return 0;
+        const pr = pricing.find(p => p.customer_type === (customer.customer_type as any) && p.bottle_type === formBottleType);
+        const qty = selectedBottleIds.length;
+        return pr ? pr.price * qty : 0;
+      } else {
+        return typeof formAmount === 'number' ? formAmount : 0;
+      }
     }
-    if (formType === 'return') return 0;
+    if (formType === 'balance' || formType === 'payment') {
+      return typeof formAmount === 'number' ? formAmount : 0;
+    }
     return 0;
   };
 
   const fetchData = async () => {
     try {
-      const [transactionsResult, customersResult, pricingResult] = await Promise.all([
+      const [transactionsResult, customersResult, pricingResult, inStockRes] = await Promise.all([
         supabase.from('transactions').select('*').eq('owner_user_id', user!.id).order('transaction_date', { ascending: false }),
         supabase.from('customers').select('id, name, pin, customer_type, balance').eq('owner_user_id', user!.id).order('name'),
-        supabase.from('pricing').select('id, bottle_type, customer_type, price').eq('owner_user_id', user!.id)
+        supabase.from('pricing').select('id, bottle_type, customer_type, price').eq('owner_user_id', user!.id),
+        supabase.from('bottles').select('id, bottle_number, bottle_type').eq('owner_user_id', user!.id).eq('is_returned', true).order('bottle_number')
       ]);
 
       if (transactionsResult.error) throw transactionsResult.error;
       if (customersResult.error) throw customersResult.error;
       if (pricingResult.error) throw pricingResult.error;
+      if (inStockRes.error) throw inStockRes.error;
       
 
       setTransactions(transactionsResult.data || []);
       setCustomers(customersResult.data || []);
       setPricing(pricingResult.data || []);
+      setInStock((inStockRes.data || []) as any);
       
     } catch (error: any) {
       toast({
@@ -107,54 +143,100 @@ const Transactions = () => {
     
     const formData = new FormData(e.currentTarget);
     const customer_id = formData.get('customer_id') as string;
-    const transaction_type = formData.get('transaction_type') as 'delivery' | 'payment' | 'return';
-    const quantity = parseInt(formData.get('quantity') as string) || 0;
+    const transaction_type = formData.get('transaction_type') as 'delivery' | 'payment' | 'return' | 'balance';
+    let quantity = parseInt(formData.get('quantity') as string) || 0;
     const bottle_type = (formData.get('bottle_type') as 'normal' | 'cool') || null;
-    const payment_type = (formData.get('payment_type') as 'cash' | 'online' | 'credit') || null;
+    const payment_type = (formData.get('payment_type') as 'cash' | 'online' | 'credit' | 'not_paid') || null;
     const notes = (formData.get('notes') as string) || null;
     const transaction_date = (formData.get('transaction_date') as string) || new Date().toISOString();
+    const delivery_mode = (formData.get('delivery_mode') as 'bottle' | 'filling') || 'bottle';
+    const amount_input = parseFloat(formData.get('amount') as string);
 
     // Auto-calc amount based on pricing
     const customer = customers.find(c => c.id === customer_id);
     let amount = 0;
     if (transaction_type === 'delivery') {
-      if (!customer || !bottle_type) {
-        toast({ variant: 'destructive', title: 'Error', description: 'Select customer and bottle type for delivery' });
-        return;
+      if (delivery_mode === 'bottle') {
+        if (!customer || !bottle_type) {
+          toast({ variant: 'destructive', title: 'Error', description: 'Select customer and bottle type for delivery (bottle)' });
+          return;
+        }
+        // quantity from selection
+        quantity = selectedBottleIds.length;
+        if (quantity === 0) {
+          toast({ variant: 'destructive', title: 'Select bottles', description: 'Choose one or more bottles to assign' });
+          return;
+        }
+        const priceRow = pricing.find(p => p.customer_type === (customer.customer_type as any) && p.bottle_type === bottle_type);
+        if (!priceRow) {
+          toast({ variant: 'destructive', title: 'Pricing missing', description: `No pricing for ${customer?.customer_type} / ${bottle_type}` });
+          return;
+        }
+        amount = quantity * priceRow.price;
+      } else {
+        // filling: amount entered manually
+        if (isNaN(amount_input) || amount_input <= 0) {
+          toast({ variant: 'destructive', title: 'Invalid amount', description: 'Enter a valid amount for filling' });
+          return;
+        }
+        amount = amount_input;
       }
-      const priceRow = pricing.find(p => p.customer_type === (customer.customer_type as any) && p.bottle_type === bottle_type);
-      if (!priceRow) {
-        toast({ variant: 'destructive', title: 'Pricing missing', description: `No pricing for ${customer.customer_type} / ${bottle_type}` });
-        return;
-      }
-      amount = (quantity || 0) * priceRow.price;
     } else if (transaction_type === 'payment') {
-      amount = parseFloat(formData.get('amount') as string) || 0; // payments use user-entered amount
+      amount = isNaN(amount_input) ? 0 : amount_input; // payments use user-entered amount
     } else if (transaction_type === 'return') {
+      // Returns: must select previously taken bottles
+      quantity = selectedBottleIds.length;
+      if (quantity === 0) {
+        toast({ variant: 'destructive', title: 'Select bottles', description: 'Choose one or more bottles to mark as returned' });
+        return;
+      }
       amount = 0;
+    } else if (transaction_type === 'balance') {
+      if (isNaN(amount_input) || amount_input <= 0) {
+        toast({ variant: 'destructive', title: 'Invalid amount', description: 'Enter a positive balance amount' });
+        return;
+      }
+      amount = amount_input;
     }
 
+    const storagePaymentType: 'cash' | 'online' | 'credit' | null = payment_type === 'not_paid' ? null : (payment_type as any);
+    const extraNotes = transaction_type === 'delivery' && payment_type === 'not_paid' ? (notes ? `${notes} • Not paid` : 'Not paid') : notes;
     const transactionData = {
       customer_id,
-      transaction_type,
+      transaction_type: transaction_type === 'balance' ? 'delivery' : transaction_type, // store as delivery for compatibility
       quantity,
       amount,
       bottle_type,
-      payment_type,
-      notes,
+      payment_type: storagePaymentType,
+      notes: transaction_type === 'balance' ? (notes ? `Balance: ${notes}` : 'Balance adjustment') : extraNotes,
       transaction_date,
       owner_user_id: user!.id,
     };
 
     try {
+      // If delivering bottles, perform bottle assignment and capture numbers
+      if (transaction_type === 'delivery' && delivery_mode === 'bottle') {
+        // update bottles to assign
+        const { error: updErr } = await supabase
+          .from('bottles')
+          .update({ current_customer_id: customer_id, is_returned: false })
+          .in('id', selectedBottleIds);
+        if (updErr) throw updErr;
+        // map ids to numbers
+        const map = new Map<string, { bottle_number: string; bottle_type: 'normal' | 'cool' }>();
+        for (const b of inStock) map.set(b.id, { bottle_number: b.bottle_number, bottle_type: b.bottle_type });
+        const bottle_numbers = selectedBottleIds.map(id => map.get(id)?.bottle_number).filter(Boolean) as string[];
+        (transactionData as any).bottle_numbers = bottle_numbers;
+      }
+
       const { error } = await supabase
         .from('transactions')
-        .insert(transactionData);
+        .insert(transactionData as any);
       
       if (error) throw error;
       // Update balance rules
       if (customer) {
-        if (transaction_type === 'delivery') {
+        if (transaction_type === 'delivery' || transaction_type === 'balance') {
           await supabase.from('customers').update({ balance: (customer.balance || 0) + amount }).eq('id', customer.id);
         } else if (transaction_type === 'payment') {
           await supabase.from('customers').update({ balance: (customer.balance || 0) - amount }).eq('id', customer.id);
@@ -169,6 +251,7 @@ const Transactions = () => {
       
       fetchData();
       setIsDialogOpen(false);
+      setSelectedBottleIds([]);
     } catch (error: any) {
       toast({
         variant: "destructive",
@@ -241,7 +324,7 @@ const Transactions = () => {
               <div>
                 <Label htmlFor="customer_id">Customer *</Label>
                 <Select name="customer_id" required onValueChange={(v) => setFormCustomerId(v)}>
-                  <SelectTrigger>
+                  <SelectTrigger className="bg-white">
                     <SelectValue placeholder="Select customer" />
                   </SelectTrigger>
                   <SelectContent>
@@ -256,75 +339,137 @@ const Transactions = () => {
               
               <div>
                 <Label htmlFor="transaction_type">Transaction Type *</Label>
-                <Select name="transaction_type" required onValueChange={(v) => setFormType(v)}>
-                  <SelectTrigger>
+                <Select name="transaction_type" required onValueChange={(v) => { setFormType(v); }}>
+                  <SelectTrigger className="bg-white">
                     <SelectValue placeholder="Select type" />
                   </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="delivery">Delivery</SelectItem>
                       <SelectItem value="payment">Payment</SelectItem>
                       <SelectItem value="return">Return</SelectItem>
+                      <SelectItem value="balance">Balance</SelectItem>
                     </SelectContent>
                 </Select>
               </div>
-              
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <Label htmlFor="quantity">Quantity</Label>
-                  <Input
-                    id="quantity"
-                    name="quantity"
-                    type="number"
-                    min="0"
-                    onChange={(e) => setFormQty(parseInt(e.target.value || '0'))}
-                  />
-                </div>
-                <div>
-                  <Label htmlFor="amount">Amount (₹) {formType !== 'payment' && '(auto)'}</Label>
-                  <Input
-                    id="amount"
-                    name="amount"
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    value={formType === 'payment' ? undefined : computePreviewAmount()}
-                    readOnly={formType !== 'payment'}
-                  />
-                </div>
-              </div>
-              
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <Label htmlFor="bottle_type">Bottle Type</Label>
-                  <Select name="bottle_type" onValueChange={(v) => setFormBottleType(v as 'normal' | 'cool')}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select type" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="normal">Normal</SelectItem>
-                      <SelectItem value="cool">Cool</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div>
-                  <Label htmlFor="payment_type">Payment Type</Label>
-                  <Select name="payment_type">
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select type" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="cash">Cash</SelectItem>
-                      <SelectItem value="online">Online</SelectItem>
-                      <SelectItem value="credit">Credit</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
 
-              {formType !== 'payment' && (
-                <div className="text-sm text-muted-foreground">
-                  Auto total: ₹{computePreviewAmount().toFixed(2)}
+              {/* Delivery mode or simple inputs based on type */}
+              {formType === 'delivery' && (
+                <>
+                  <div>
+                    <Label htmlFor="delivery_mode">Delivery Mode</Label>
+                    <Select name="delivery_mode" value={formDeliveryMode} onValueChange={(v) => setFormDeliveryMode(v as any)}>
+                      <SelectTrigger className="bg-white">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="bottle">Bottle</SelectItem>
+                        <SelectItem value="filling">Filling</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  {formDeliveryMode === 'bottle' ? (
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <Label htmlFor="quantity">Quantity</Label>
+                        <Input id="quantity" name="quantity" type="number" min="0" value={selectedBottleIds.length} readOnly className="bg-white" />
+                      </div>
+                      <div>
+                        <Label htmlFor="bottle_type">Bottle Type</Label>
+                        <Select name="bottle_type" onValueChange={(v) => setFormBottleType(v as 'normal' | 'cool')}>
+                          <SelectTrigger className="bg-white">
+                            <SelectValue placeholder="Select type" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="normal">Normal</SelectItem>
+                            <SelectItem value="cool">Cool</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="col-span-2">
+                        <Label>Select bottles from inventory</Label>
+                        <div className="grid grid-cols-2 gap-2 max-h-48 overflow-auto border rounded p-2 mt-1">
+                          {formBottleType ? (
+                            inStock.filter(b => b.bottle_type === formBottleType).map(b => (
+                              <label key={b.id} className="flex items-center gap-2 text-sm">
+                                <input
+                                  type="checkbox"
+                                  checked={selectedBottleIds.includes(b.id)}
+                                  onChange={(e) => setSelectedBottleIds(prev => e.target.checked ? [...prev, b.id] : prev.filter(x => x !== b.id))}
+                                />
+                                <span>{b.bottle_number}</span>
+                              </label>
+                            ))
+                          ) : (
+                            <div className="text-xs text-muted-foreground">Select a bottle type to see available bottles.</div>
+                          )}
+                        </div>
+                        <div className="text-xs text-muted-foreground mt-1">Auto total: ₹{computePreviewAmount().toFixed(2)}</div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <Label htmlFor="amount">Amount (₹)</Label>
+                        <Input id="amount" name="amount" type="number" min="0" step="0.01" value={formAmount === '' ? '' : formAmount} onChange={(e) => setFormAmount(e.target.value === '' ? '' : Number(e.target.value))} className="bg-white" />
+                      </div>
+                    </div>
+                  )}
+                  <div>
+                    <Label htmlFor="payment_type">Payment Type</Label>
+                    <Select name="payment_type" value={formPaymentType} onValueChange={(v) => setFormPaymentType(v as any)}>
+                      <SelectTrigger className="bg-white">
+                        <SelectValue placeholder="Select type" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="not_paid">Not Paid</SelectItem>
+                        <SelectItem value="cash">Cash</SelectItem>
+                        <SelectItem value="online">Online</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+              )}
+
+              {formType === 'return' && (
+                <div className="space-y-2">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <Label htmlFor="quantity">Quantity</Label>
+                      <Input id="quantity" name="quantity" type="number" min="0" value={selectedBottleIds.length} readOnly className="bg-white" />
+                    </div>
+                  </div>
+                  <div>
+                    <Label>Select bottles to mark returned</Label>
+                    <div className="grid grid-cols-2 gap-2 max-h-48 overflow-auto border rounded p-2 mt-1">
+                      {withCustomer.length > 0 ? (
+                        withCustomer.map(b => (
+                          <label key={b.id} className="flex items-center gap-2 text-sm">
+                            <input
+                              type="checkbox"
+                              checked={selectedBottleIds.includes(b.id)}
+                              onChange={(e) => setSelectedBottleIds(prev => e.target.checked ? [...prev, b.id] : prev.filter(x => x !== b.id))}
+                            />
+                            <span>{b.bottle_number} • {b.bottle_type}</span>
+                          </label>
+                        ))
+                      ) : (
+                        <div className="text-xs text-muted-foreground">No bottles currently with this customer.</div>
+                      )}
+                    </div>
+                  </div>
                 </div>
+              )}
+
+              {(formType === 'payment' || formType === 'balance') && (
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label htmlFor="amount">Amount (₹)</Label>
+                    <Input id="amount" name="amount" type="number" min="0" step="0.01" value={formAmount === '' ? '' : formAmount} onChange={(e) => setFormAmount(e.target.value === '' ? '' : Number(e.target.value))} className="bg-white" />
+                  </div>
+                </div>
+              )}
+
+              {formType === 'delivery' && formDeliveryMode === 'bottle' && (
+                <div className="text-sm text-muted-foreground">Auto total: ₹{computePreviewAmount().toFixed(2)}</div>
               )}
               
               {/* Staff selection removed */}
@@ -336,6 +481,7 @@ const Transactions = () => {
                   name="transaction_date"
                   type="datetime-local"
                   defaultValue={new Date().toISOString().slice(0, 16)}
+                  className="bg-white"
                 />
               </div>
               
@@ -346,6 +492,7 @@ const Transactions = () => {
                   name="notes"
                   placeholder="Additional notes..."
                   rows={2}
+                  className="bg-white"
                 />
               </div>
               

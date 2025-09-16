@@ -476,7 +476,7 @@ const Shop = () => {
                   <Input
                     type="number"
                     min={0}
-                    value={amount === '' ? '' : amount}
+                    value={amount === '' ? (() => { const ctype = mode === 'guest' ? 'shop' : (customers.find(c => c.id === selectedCustomerId)?.customer_type || 'shop'); const p = getUnitPrice(ctype as any, bottleType); return p !== undefined ? p * quantity : '' })() : amount}
                     onChange={(e) => setAmount(e.target.value === '' ? '' : Number(e.target.value))}
                     placeholder="Auto-calculated. You can override."
                   />
