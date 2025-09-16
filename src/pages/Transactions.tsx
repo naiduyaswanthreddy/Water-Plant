@@ -61,6 +61,7 @@ const Transactions = () => {
   const [inStock, setInStock] = useState<Array<{ id: string; bottle_number: string; bottle_type: 'normal' | 'cool' }>>([]);
   const [selectedBottleIds, setSelectedBottleIds] = useState<string[]>([]);
   const [withCustomer, setWithCustomer] = useState<Array<{ id: string; bottle_number: string; bottle_type: 'normal' | 'cool' }>>([]);
+  const [customerSearch, setCustomerSearch] = useState('');
 
   useEffect(() => {
     if (!user) return;
@@ -323,18 +324,30 @@ const Transactions = () => {
             <form onSubmit={handleSubmit} className="space-y-4">
               <div>
                 <Label htmlFor="customer_id">Customer *</Label>
-                <Select name="customer_id" required onValueChange={(v) => setFormCustomerId(v)}>
-                  <SelectTrigger className="bg-white">
-                    <SelectValue placeholder="Select customer" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {customers.map((customer) => (
-                      <SelectItem key={customer.id} value={customer.id}>
-                        {customer.name} ({customer.pin})
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <div className="space-y-2">
+                  <Input
+                    placeholder="Search by name"
+                    value={customerSearch}
+                    onChange={(e) => setCustomerSearch(e.target.value)}
+                    className="bg-white"
+                  />
+                  <Select name="customer_id" required onValueChange={(v) => { setFormCustomerId(v); }}>
+                    <SelectTrigger className="bg-white">
+                      <SelectValue placeholder="Select customer" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {(customers.filter(c => {
+                        const term = customerSearch.trim().toLowerCase();
+                        if (!term) return true;
+                        return c.name.toLowerCase().includes(term);
+                      })).map((customer) => (
+                        <SelectItem key={customer.id} value={customer.id}>
+                          {customer.name} ({customer.pin})
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
               </div>
               
               <div>
@@ -427,6 +440,7 @@ const Transactions = () => {
                       </SelectContent>
                     </Select>
                   </div>
+                </>
               )}
 
               {formType === 'return' && (
