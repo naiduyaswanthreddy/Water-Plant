@@ -47,7 +47,8 @@ const FunctionOrders = () => {
   const [filterStatus, setFilterStatus] = useState<string>('all');
   // Edit-only tabs and receiving state
   const [activeTab, setActiveTab] = useState<'giving' | 'receiving'>('giving');
-  const [withCustomer, setWithCustomer] = useState<{ id: string; bottle_number: string; bottle_type: 'normal' | 'cool' }[]>([]);
+  // Bottles tied to this specific order (for receiving list)
+  const [withCustomer, setWithCustomer] = useState<{ id: string; bottle_number: string; bottle_type: 'normal' | 'cool'; received?: boolean }[]>([]);
   const [returnBottleIds, setReturnBottleIds] = useState<string[]>([]);
   const [receivePaid, setReceivePaid] = useState<string>('');
   // Inline new function customer fields (for new orders)
@@ -96,17 +97,74 @@ const FunctionOrders = () => {
   };
 
   const fetchWithCustomerForOrder = async (order: FunctionOrder) => {
+    // Try mapping table first
     try {
-      const { data, error } = await supabase
+      const { data, error } = await (supabase as any)
+        .from('function_order_bottles')
+        .select('bottle_id, bottle_number, bottle_type, received')
+        .eq('owner_user_id', user!.id)
+        .eq('order_id', order.id)
+        .order('bottle_number');
+      if (!error) {
+        const rows = (data || []).filter((r: any) => !!r.bottle_id);
+        if (rows.length > 0) {
+          setWithCustomer(rows.map((r: any) => ({ id: r.bottle_id as string, bottle_number: r.bottle_number, bottle_type: r.bottle_type, received: !!r.received })));
+          return;
+        }
+      }
+    } catch {}
+    // Attempt backfill from delivery transactions for this order/customer
+    try {
+      const { data: txs } = await supabase
+        .from('transactions')
+        .select('id, bottle_numbers, transaction_date, notes')
+        .eq('owner_user_id', user!.id)
+        .eq('customer_id', order.customer_id)
+        .eq('transaction_type', 'delivery')
+        .order('transaction_date', { ascending: false })
+        .limit(10);
+      const eventTime = order.event_date ? new Date(order.event_date).getTime() : undefined;
+      const candidate = (txs || []).find(t => {
+        const okNote = (t.notes || '').toLowerCase().startsWith('function');
+        if (!okNote) return false;
+        if (!eventTime) return true;
+        const tt = new Date(t.transaction_date).getTime();
+        const delta = Math.abs(tt - eventTime);
+        return delta <= 3 * 24 * 60 * 60 * 1000; // within 3 days of event
+      });
+      const numbers: string[] = candidate?.bottle_numbers || [];
+      if (numbers.length > 0) {
+        // Resolve bottle ids by number
+        const { data: bottleRows } = await supabase
+          .from('bottles')
+          .select('id, bottle_number, bottle_type')
+          .eq('owner_user_id', user!.id)
+          .in('bottle_number', numbers);
+        const rows = (bottleRows || []).map((b: any) => ({
+          order_id: order.id,
+          bottle_id: b.id,
+          bottle_number: b.bottle_number,
+          bottle_type: b.bottle_type,
+          owner_user_id: user!.id,
+        }));
+        if (rows.length > 0) {
+          await ((supabase as any)
+            .from('function_order_bottles') as any)
+            .upsert(rows, { onConflict: 'order_id,bottle_id', ignoreDuplicates: true });
+        }
+      }
+    } catch {}
+    // Fallback for legacy orders or when mapping table isn't available
+    try {
+      const { data: legacy } = await supabase
         .from('bottles')
-        .select('id, bottle_number, bottle_type, is_returned, current_customer_id')
+        .select('id, bottle_number, bottle_type')
         .eq('owner_user_id', user!.id)
         .eq('current_customer_id', order.customer_id)
         .eq('is_returned', false)
         .order('bottle_number');
-      if (error) throw error;
-      setWithCustomer((data || []).map((b: any) => ({ id: b.id, bottle_number: b.bottle_number, bottle_type: b.bottle_type })));
-    } catch (e) {
+      setWithCustomer((legacy || []).map((b: any) => ({ id: b.id, bottle_number: b.bottle_number, bottle_type: b.bottle_type, received: false })));
+    } catch {
       setWithCustomer([]);
     }
   };
@@ -175,7 +233,8 @@ const FunctionOrders = () => {
         const { data, error } = await supabase
           .from('function_orders')
           .insert({ ...orderData, owner_user_id: user!.id })
-          .select('id');
+          .select('id')
+          .single();
         
         if (error) throw error;
         
@@ -184,18 +243,67 @@ const FunctionOrders = () => {
           description: "Function order created successfully"
         });
         // Attempt to retrieve the inserted order id if returned
-        if (data && data[0]?.id) {
-          orderId = data[0].id as string;
+        if (data && (data as any).id) {
+          orderId = (data as any).id as string;
         }
       } else if (activeTab === 'giving') {
-        // Update giving details
+        // Update giving details: increment supplied by newly selected bottles
+        const addedCount = selectedBottleIds.length;
+        const addedAmount = overrideTotal ? (parseFloat(overrideTotal) || 0) : calcTotal;
+        const updatePayload: any = {
+          event_name: orderData.event_name,
+          event_date: orderData.event_date,
+        };
+        if (addedCount > 0) {
+          updatePayload.bottles_supplied = editingOrder.bottles_supplied + addedCount;
+          updatePayload.total_amount = (editingOrder.total_amount || 0) + addedAmount;
+        }
         const { error } = await supabase
           .from('function_orders')
-          .update(orderData)
+          .update(updatePayload)
           .eq('id', editingOrder.id);
         if (error) throw error;
         toast({ title: 'Success', description: 'Function order updated successfully' });
         orderId = editingOrder.id;
+
+        // If additional bottles were selected while editing, assign them and record delivery + mapping
+        if (selectedBottleIds.length > 0) {
+          const bottleNumbers = selected.map((b) => b.bottle_number);
+          // Assign bottles to this function customer
+          const { error: updErr } = await supabase
+            .from('bottles')
+            .update({ current_customer_id: orderData.customer_id, is_returned: false })
+            .in('id', selectedBottleIds);
+          if (updErr) throw updErr;
+
+          // Create a delivery transaction for these extra bottles
+          const { error: txErr } = await supabase
+            .from('transactions')
+            .insert({
+              customer_id: orderData.customer_id,
+              transaction_type: 'delivery',
+              quantity: bottleNumbers.length,
+              bottle_numbers: bottleNumbers,
+              amount: addedAmount,
+              transaction_date: new Date().toISOString(),
+              notes: orderData.event_name ? `Function: ${orderData.event_name}` : 'Function order bottles supplied',
+              owner_user_id: user!.id,
+            });
+          if (txErr) throw txErr;
+
+          // Upsert mapping rows
+          const rows = selected.map((b) => ({
+            order_id: orderId,
+            bottle_id: b.id,
+            bottle_number: b.bottle_number,
+            bottle_type: b.bottle_type,
+            owner_user_id: user!.id,
+          }));
+          const { error: mapErr } = await (supabase
+            .from('function_order_bottles') as any)
+            .upsert(rows, { onConflict: 'order_id,bottle_id', ignoreDuplicates: true });
+          if (mapErr) throw mapErr;
+        }
       } else if (activeTab === 'receiving') {
         // Receiving: process returns and payments, then optionally clear
         const order = editingOrder;
@@ -210,6 +318,13 @@ const FunctionOrders = () => {
             .update({ current_customer_id: null, is_returned: true })
             .in('id', returnBottleIds);
           if (updErr) throw updErr;
+          // Mark mapping rows as received
+          const { error: mapErr } = await (supabase as any)
+            .from('function_order_bottles')
+            .update({ received: true, received_at: new Date().toISOString() })
+            .in('bottle_id', returnBottleIds)
+            .eq('order_id', order.id);
+          if (mapErr) throw mapErr;
           // Insert return transaction
           const { error: txErr } = await supabase
             .from('transactions')
@@ -266,7 +381,7 @@ const FunctionOrders = () => {
         toast({ title: 'Saved', description: `Received ${bottlesReturnedInc} bottle(s), payment ₹${(receivePaid||'0')}` });
       }
       
-      // If bottles were selected, assign them to the function customer and create a transaction
+      // If bottles were selected, assign them to the function customer, create a transaction, and map to this order
       if (!editingOrder && selectedBottleIds.length > 0) {
         // Load bottle numbers for selected bottles
         const bottleNumbers = selected.map((b) => b.bottle_number);
@@ -292,6 +407,21 @@ const FunctionOrders = () => {
             owner_user_id: user!.id,
           });
         if (txErr) throw txErr;
+
+        // Insert mapping rows to function_order_bottles for this order
+        if (orderId) {
+          const rows = selected.map((b) => ({
+            order_id: orderId,
+            bottle_id: b.id,
+            bottle_number: b.bottle_number,
+            bottle_type: b.bottle_type,
+            owner_user_id: user!.id,
+          }));
+          const { error: mapInsErr } = await (supabase
+            .from('function_order_bottles') as any)
+            .upsert(rows, { onConflict: 'order_id,bottle_id', ignoreDuplicates: true });
+          if (mapInsErr) throw mapInsErr;
+        }
 
         // Update customer balance by calcTotal
         const { data: custRow } = await supabase.from('customers').select('id, balance').eq('id', orderData.customer_id).single();
@@ -426,8 +556,25 @@ const FunctionOrders = () => {
             <form onSubmit={handleSubmit} className="space-y-4">
               {editingOrder && (
                 <div className="flex gap-2">
-                  <Button type="button" variant={activeTab === 'giving' ? 'default' : 'outline'} size="sm" onClick={() => setActiveTab('giving')}>Giving</Button>
-                  <Button type="button" variant={activeTab === 'receiving' ? 'default' : 'outline'} size="sm" onClick={() => setActiveTab('receiving')}>Receiving</Button>
+                  <Button
+                    type="button"
+                    variant={activeTab === 'giving' ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => setActiveTab('giving')}
+                  >
+                    Giving
+                  </Button>
+                  <Button
+                    type="button"
+                    variant={activeTab === 'receiving' ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => {
+                      setActiveTab('receiving');
+                      if (editingOrder) fetchWithCustomerForOrder(editingOrder);
+                    }}
+                  >
+                    Receiving
+                  </Button>
                 </div>
               )}
               <div className="grid grid-cols-2 gap-4">
@@ -492,19 +639,6 @@ const FunctionOrders = () => {
                     className="bg-white"
                   />
                 </div>
-                {editingOrder && (
-                  <div>
-                    <Label htmlFor="bottles_returned">Bottles Returned</Label>
-                    <Input
-                      id="bottles_returned"
-                      name="bottles_returned"
-                      type="number"
-                      min="0"
-                      defaultValue={editingOrder?.bottles_returned || ''}
-                      className="bg-white"
-                    />
-                  </div>
-                )}
               </div>
               )}
 
@@ -565,6 +699,64 @@ const FunctionOrders = () => {
                   <div className="text-xs text-muted-foreground mt-1">{selectedBottleIds.length} bottle(s) selected</div>
                 )}
               </div>
+              )}
+
+              {editingOrder && activeTab === 'receiving' && (
+                <div className="space-y-3">
+                  <div>
+                    <Label>Bottles currently with customer</Label>
+                    <div className="flex gap-2 mt-2">
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => {
+                          const ids = withCustomer.filter(b => !b.received).map(b => b.id);
+                          setReturnBottleIds(ids);
+                        }}
+                      >
+                        Select All
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setReturnBottleIds([])}
+                      >
+                        Clear
+                      </Button>
+                    </div>
+                    <div className="mt-2 max-h-48 overflow-auto border rounded-md p-2 space-y-1">
+                      {withCustomer.length === 0 && (
+                        <div className="text-sm text-muted-foreground">No bottles currently with this customer.</div>
+                      )}
+                      {withCustomer.map((b) => (
+                        <div key={b.id} className="flex items-center justify-between gap-2 text-sm">
+                          <label className="flex items-center gap-2">
+                            <input
+                              type="checkbox"
+                              disabled={b.received}
+                              checked={returnBottleIds.includes(b.id)}
+                              onChange={(e) => {
+                                if (b.received) return;
+                                setReturnBottleIds((prev) => e.target.checked ? [...prev, b.id] : prev.filter(id => id !== b.id));
+                              }}
+                            />
+                            <span>
+                              {b.bottle_number} • {b.bottle_type}
+                            </span>
+                          </label>
+                          {b.received && (
+                            <span className="text-xs px-2 py-0.5 rounded bg-green-100 text-green-700">Received</span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                    {returnBottleIds.length > 0 && (
+                      <div className="text-xs text-muted-foreground mt-1">{returnBottleIds.length} bottle(s) selected to receive</div>
+                    )}
+                  </div>
+                </div>
               )}
 
               {(!editingOrder || activeTab === 'giving') && (

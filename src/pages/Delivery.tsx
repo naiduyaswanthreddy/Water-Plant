@@ -55,6 +55,17 @@ const Delivery = () => {
   const [withCustomer, setWithCustomer] = useState<Bottle[]>([]);
   const [yesterdayGiven, setYesterdayGiven] = useState<string[]>([]);
   const [returnBottleIds, setReturnBottleIds] = useState<string[]>([]);
+  const [lastAction, setLastAction] = useState<
+    | null
+    | {
+        used: boolean;
+        kind: 'handover' | 'fill_only' | 'extra_handover' | 'extra_fill';
+        customerId: string;
+        transactionId: string;
+        bottleIds?: string[];
+        amount: number;
+      }
+  >(null);
 
   const { toast } = useToast();
   const { user } = useAuth();
@@ -156,7 +167,7 @@ const Delivery = () => {
     if (txErr) throw txErr;
   };
 
-  const assignBottlesDelivery = async (cust: Customer, ids: string[], bt: 'normal' | 'cool', when: string, note?: string) => {
+  const assignBottlesDelivery = async (cust: Customer, ids: string[], bt: 'normal' | 'cool', when: string, note?: string): Promise<{ transactionId: string; amount: number; numbers: string[]; }> => {
     // Look up numbers from inStock/current lists
     const dict = new Map<string, Bottle>();
     for (const b of inStock) dict.set(b.id, b);
@@ -172,7 +183,7 @@ const Delivery = () => {
     // Insert transaction with bottle_numbers
     const unitPrice = householdPrices[bt] || 0;
     const amount = unitPrice * numbers.length;
-    const { error: txErr } = await supabase.from('transactions').insert({
+    const { data: txIns, error: txErr } = await supabase.from('transactions').insert({
       customer_id: cust.id,
       transaction_type: 'delivery',
       quantity: numbers.length,
@@ -182,7 +193,7 @@ const Delivery = () => {
       transaction_date: when,
       notes: note || null,
       owner_user_id: user!.id,
-    });
+    }).select('id').single();
     if (txErr) throw txErr;
 
     // Update balance
@@ -191,6 +202,7 @@ const Delivery = () => {
       .update({ balance: (cust.balance || 0) + amount })
       .eq('id', cust.id);
     if (balErr) throw balErr;
+    return { transactionId: (txIns as any).id as string, amount, numbers };
   };
 
   const householdPrices = useMemo(() => {
@@ -273,18 +285,18 @@ const Delivery = () => {
     }
   };
 
-  const upsertDelivery = async (cust: Customer, qty: number, bt: 'normal' | 'cool', when: string, note?: string) => {
+  const upsertDelivery = async (cust: Customer, qty: number, bt: 'normal' | 'cool', when: string, note?: string): Promise<{ transactionId: string; amount: number; } | null> => {
     // Pricing check
     const unitPrice = householdPrices[bt];
     if (unitPrice === undefined) {
       toast({ variant: 'destructive', title: 'Pricing missing', description: `No pricing set for household / ${bt}. Please set it in Pricing.` });
-      return;
+      return null;
     }
 
     const amount = qty * unitPrice;
 
     // Insert transaction and update balance
-    const { error: txErr } = await supabase.from('transactions').insert({
+    const { data: txIns, error: txErr } = await supabase.from('transactions').insert({
       customer_id: cust.id,
       transaction_type: 'delivery',
       quantity: qty,
@@ -293,7 +305,7 @@ const Delivery = () => {
       transaction_date: when,
       notes: note || null,
       owner_user_id: user!.id,
-    });
+    }).select('id').single();
     if (txErr) throw txErr;
 
     const { error: balErr } = await supabase
@@ -312,14 +324,21 @@ const Delivery = () => {
       }
       if (mode === 'handover') {
         const filtered = inStock.filter(b => b.bottle_type === bottleType);
-        const selected = selectedBottleIds.filter(id => filtered.some(b => b.id === id));
+        let selected = selectedBottleIds.filter(id => filtered.some(b => b.id === id));
+        if (selected.length < quantity && filtered.length >= quantity) {
+          // Auto-pick the first N available bottles to meet the requested quantity
+          selected = filtered.slice(0, quantity).map(b => b.id);
+        }
         if (selected.length !== quantity) {
           toast({ variant: 'destructive', title: 'Select bottles', description: `Please select ${quantity} ${bottleType} bottle(s) to hand over.` });
           return;
         }
-        await assignBottlesDelivery(activeCustomer, selected, bottleType, date);
+        const result = await assignBottlesDelivery(activeCustomer, selected, bottleType, date);
+        setLastAction({ used: false, kind: 'handover', customerId: activeCustomer.id, transactionId: result.transactionId, bottleIds: selected, amount: result.amount });
       } else {
-        await upsertDelivery(activeCustomer, quantity, bottleType, date, 'Fill only (no bottle handover)');
+        const result = await upsertDelivery(activeCustomer, quantity, bottleType, date, 'Fill only (no bottle handover)');
+        if (!result) return; // pricing missing, already toasted
+        setLastAction({ used: false, kind: 'fill_only', customerId: activeCustomer.id, transactionId: result.transactionId, amount: result.amount });
       }
       toast({ title: 'Recorded', description: `Given ${quantity} ${bottleType} bottle(s) to ${activeCustomer.name}` });
       await fetchData();
@@ -329,10 +348,65 @@ const Delivery = () => {
     }
   };
 
+  const handleUndo = async () => {
+    if (!lastAction || lastAction.used) return;
+    try {
+      // Delete the transaction
+      await supabase.from('transactions').delete().eq('id', lastAction.transactionId);
+      // Revert bottles if any were handed over
+      if (lastAction.bottleIds && lastAction.bottleIds.length > 0) {
+        await supabase
+          .from('bottles')
+          .update({ current_customer_id: null, is_returned: true })
+          .in('id', lastAction.bottleIds);
+      }
+      // Revert customer balance
+      const { data: cust } = await supabase
+        .from('customers')
+        .select('balance')
+        .eq('id', lastAction.customerId)
+        .single();
+      if (cust) {
+        await supabase
+          .from('customers')
+          .update({ balance: Math.max(0, (cust.balance || 0) - lastAction.amount) })
+          .eq('id', lastAction.customerId);
+      }
+      setLastAction(prev => (prev ? { ...prev, used: true } : prev));
+      toast({ title: 'Undone', description: 'Last action has been reverted' });
+      await fetchData();
+    } catch (e: any) {
+      toast({ variant: 'destructive', title: 'Undo failed', description: e.message });
+    }
+  };
+
   const handleExtraConfirm = async () => {
     if (!activeCustomer || !dialogType) return;
     try {
-      await upsertDelivery(activeCustomer, quantity, bottleType, date, 'Extra');
+      // Process any returns marked from previously held bottles
+      if (returnBottleIds.length > 0) {
+        await markReturns(activeCustomer, returnBottleIds, date);
+      }
+      if (mode === 'handover') {
+        // Validate selection count and assign bottles as extra
+        const filtered = inStock.filter(b => b.bottle_type === bottleType);
+        let selected = selectedBottleIds.filter(id => filtered.some(b => b.id === id));
+        if (selected.length < quantity && filtered.length >= quantity) {
+          // Auto-pick the first N available bottles to meet the requested quantity
+          selected = filtered.slice(0, quantity).map(b => b.id);
+        }
+        if (selected.length !== quantity) {
+          toast({ variant: 'destructive', title: 'Select bottles', description: `Please select ${quantity} ${bottleType} bottle(s) to hand over.` });
+          return;
+        }
+        const result = await assignBottlesDelivery(activeCustomer, selected, bottleType, date, 'Extra');
+        setLastAction({ used: false, kind: 'extra_handover', customerId: activeCustomer.id, transactionId: result.transactionId, bottleIds: selected, amount: result.amount });
+      } else {
+        // Fill only extra delivery (no bottle handover)
+        const result = await upsertDelivery(activeCustomer, quantity, bottleType, date, 'Extra (fill only)');
+        if (!result) return; // pricing missing, already toasted
+        setLastAction({ used: false, kind: 'extra_fill', customerId: activeCustomer.id, transactionId: result.transactionId, amount: result.amount });
+      }
       toast({ title: 'Recorded', description: `Extra ${quantity} ${bottleType} bottle(s) for ${activeCustomer.name}` });
       await fetchData();
       resetDialog();
@@ -370,6 +444,17 @@ const Delivery = () => {
       <div className="flex justify-between items-center">
         <div>
           <h1 className="text-3xl font-bold">Delivery</h1>
+        </div>
+        <div>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleUndo}
+            disabled={!lastAction || lastAction.used}
+            title={lastAction && !lastAction.used ? 'Undo last action' : 'Nothing to undo'}
+          >
+            Undo
+          </Button>
         </div>
       </div>
 

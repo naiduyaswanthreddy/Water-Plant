@@ -45,6 +45,17 @@ const Shop = () => {
   const [actionMode, setActionMode] = useState<'fill_only' | 'bottle_and_water'>('fill_only');
   const [amount, setAmount] = useState<number | ''>('');
   const [returnBottleIds, setReturnBottleIds] = useState<string[]>([]);
+  const [lastAction, setLastAction] = useState<
+    | null
+    | {
+        used: boolean;
+        kind: 'fill_only_guest' | 'fill_only_customer' | 'bottle_and_water';
+        customerId: string | null;
+        transactionId: string;
+        bottleIds?: string[];
+        amount: number;
+      }
+  >(null);
 
   const { toast } = useToast();
   const { user } = useAuth();
@@ -217,7 +228,7 @@ const Shop = () => {
       }
       const calcAmount = overrideAmount !== undefined ? overrideAmount : price * quantity;
 
-      const { error: txErr } = await supabase.from('transactions').insert({
+      const { data: txIns, error: txErr } = await supabase.from('transactions').insert({
         customer_id: customerId,
         transaction_type: 'delivery',
         quantity,
@@ -226,7 +237,7 @@ const Shop = () => {
         transaction_date: new Date().toISOString(),
         notes: mode === 'guest' ? 'Shop fill (guest)' : 'Shop fill (customer)',
         owner_user_id: user!.id,
-      });
+      }).select('id').single();
       if (txErr) throw txErr;
 
       // Balance update for customer mode only (guests not tracked)
@@ -235,6 +246,7 @@ const Shop = () => {
       }
 
       toast({ title: 'Recorded', description: `Filled ${quantity} ${bottleType}` });
+      setLastAction({ used: false, kind: mode === 'guest' ? 'fill_only_guest' : 'fill_only_customer', customerId: mode === 'guest' ? null : customer?.id || null, transactionId: (txIns as any).id as string, amount: calcAmount });
       setQuantity(1);
     } catch (error: any) {
       toast({ variant: 'destructive', title: 'Error', description: error.message });
@@ -273,7 +285,7 @@ const Shop = () => {
       if (updErr) throw updErr;
 
       const bottle_numbers = bottlesSelected.map(b => b.bottle_number);
-      const { error: txErr } = await supabase.from('transactions').insert({
+      const { data: txIns, error: txErr } = await supabase.from('transactions').insert({
         customer_id: selectedCustomerId,
         transaction_type: 'delivery',
         quantity: bottle_numbers.length,
@@ -283,16 +295,44 @@ const Shop = () => {
         transaction_date: new Date().toISOString(),
         notes: 'Shop take bottle + fill',
         owner_user_id: user!.id,
-      });
+      }).select('id').single();
       if (txErr) throw txErr;
 
       await supabase.from('customers').update({ balance: (customer.balance || 0) + total }).eq('id', customer.id);
 
       toast({ title: 'Recorded', description: `Bottles issued: ${bottle_numbers.join(', ')}` });
       setSelectedBottleIds([]);
+      setLastAction({ used: false, kind: 'bottle_and_water', customerId: customer.id, transactionId: (txIns as any).id as string, bottleIds: bottlesSelected.map(b => b.id), amount: total });
       await fetchInStock();
     } catch (error: any) {
       toast({ variant: 'destructive', title: 'Error', description: error.message });
+    }
+  };
+
+  const handleUndo = async () => {
+    if (!lastAction || lastAction.used) return;
+    try {
+      // Delete the transaction
+      await supabase.from('transactions').delete().eq('id', lastAction.transactionId);
+      // Revert bottles if needed
+      if (lastAction.bottleIds && lastAction.bottleIds.length > 0) {
+        await supabase
+          .from('bottles')
+          .update({ current_customer_id: null, is_returned: true })
+          .in('id', lastAction.bottleIds);
+      }
+      // Revert balance for customer actions
+      if (lastAction.customerId) {
+        const { data: cust } = await supabase.from('customers').select('balance').eq('id', lastAction.customerId).single();
+        if (cust) {
+          await supabase.from('customers').update({ balance: Math.max(0, (cust.balance || 0) - lastAction.amount) }).eq('id', lastAction.customerId);
+        }
+      }
+      setLastAction((prev) => (prev ? { ...prev, used: true } : prev));
+      toast({ title: 'Undone', description: 'Last action has been reverted' });
+      await fetchInStock();
+    } catch (e: any) {
+      toast({ variant: 'destructive', title: 'Undo failed', description: e.message });
     }
   };
 
@@ -301,6 +341,17 @@ const Shop = () => {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold">Shop</h1>
+        </div>
+        <div>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleUndo}
+            disabled={!lastAction || lastAction.used}
+            title={lastAction && !lastAction.used ? 'Undo last action' : 'Nothing to undo'}
+          >
+            Undo
+          </Button>
         </div>
       </div>
 

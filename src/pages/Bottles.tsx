@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { PageSkeleton } from '@/components/skeletons/PageSkeleton';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -48,12 +48,33 @@ const Bottles = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [notesDraft, setNotesDraft] = useState<Record<string, string>>({});
+  const [expandedActivity, setExpandedActivity] = useState<Record<string, boolean>>({});
+  const [lastAction, setLastAction] = useState<
+    | null
+    | {
+        used: boolean;
+        kind: 'assign' | 'return';
+        transactionId: string;
+        bottleId: string;
+        customerId: string | null;
+        amount: number;
+        prevCustomerId?: string | null;
+      }
+  >(null);
   const [filterStatus, setFilterStatus] = useState<'all' | 'out' | 'returned'>('all');
   const { toast } = useToast();
   const [pricing, setPricing] = useState<Array<{ id: string; bottle_type: 'normal' | 'cool'; customer_type: 'household' | 'shop' | 'function'; price: number }>>([]);
   // Control bottle type for the add form because shadcn Select doesn't submit native form values
   const [newBottleType, setNewBottleType] = useState<'normal' | 'cool'>('normal');
   const { user } = useAuth();
+
+  const customerMap = useMemo(() => {
+    const map: Record<string, { name: string; pin: string }> = {};
+    for (const c of customers as any[]) {
+      if (c && c.id) map[c.id] = { name: c.name, pin: c.pin };
+    }
+    return map;
+  }, [customers]);
 
   const location = useLocation();
 
@@ -317,8 +338,7 @@ const Bottles = () => {
         const customer = customers.find(c => c.id === customerId);
         const priceRow = customer && bottle ? pricing.find(p => p.customer_type === customer.customer_type && p.bottle_type === bottle.bottle_type) : undefined;
         const amount = priceRow ? priceRow.price : 0;
-
-        await supabase.from('transactions').insert({
+        const { data: txIns, error: txErr } = await supabase.from('transactions').insert({
           customer_id: customerId,
           transaction_type: 'delivery',
           quantity: 1,
@@ -328,11 +348,13 @@ const Bottles = () => {
           transaction_date: new Date().toISOString(),
           notes: 'Assigned from Bottles page',
           owner_user_id: user!.id,
-        });
+        }).select('id').single();
+        if (txErr) throw txErr;
         // Update balance
         if (customer) {
           await supabase.from('customers').update({ balance: (customer.balance || 0) + amount }).eq('id', customer.id);
         }
+        setLastAction({ used: false, kind: 'assign', transactionId: (txIns as any).id as string, bottleId, customerId, amount });
       }
 
       toast({
@@ -353,6 +375,7 @@ const Bottles = () => {
   const handleReturnBottle = async (bottleId: string) => {
     try {
       const bottle = bottles.find(b => b.id === bottleId);
+      const prevCustomerId = bottle?.current_customer_id || null;
       const bottleNum = bottle?.bottle_number ? [bottle.bottle_number] : [];
       const { error } = await supabase
         .from('bottles')
@@ -366,8 +389,8 @@ const Bottles = () => {
 
       // Log a return transaction for this bottle
       if (bottleNum.length > 0) {
-        await supabase.from('transactions').insert({
-          customer_id: bottle?.current_customer_id || customers[0]?.id || '',
+        const { data: txIns, error: txErr } = await supabase.from('transactions').insert({
+          customer_id: prevCustomerId || customers[0]?.id || '',
           transaction_type: 'return',
           quantity: 1,
           bottle_numbers: bottleNum,
@@ -375,7 +398,9 @@ const Bottles = () => {
           transaction_date: new Date().toISOString(),
           notes: 'Returned via Bottles page',
           owner_user_id: user!.id,
-        });
+        }).select('id').single();
+        if (txErr) throw txErr;
+        setLastAction({ used: false, kind: 'return', transactionId: (txIns as any).id as string, bottleId, customerId: prevCustomerId, amount: 0, prevCustomerId });
       }
 
       toast({
@@ -474,55 +499,93 @@ const Bottles = () => {
         <div>
           <h1 className="text-3xl font-bold">Bottle Management</h1>
         </div>
-        
-        <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-          <DialogTrigger asChild>
-            <Button>
-              <Plus className="h-4 w-4 mr-2" />
+        <div>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={async () => {
+              if (!lastAction || lastAction.used) return;
+              try {
+                // delete transaction
+                await supabase.from('transactions').delete().eq('id', lastAction.transactionId);
+                if (lastAction.kind === 'assign') {
+                  // revert bottle back to stock
+                  await supabase.from('bottles').update({ current_customer_id: null, is_returned: true }).eq('id', lastAction.bottleId);
+                  // revert balance
+                  if (lastAction.customerId) {
+                    const { data: cust } = await supabase.from('customers').select('balance').eq('id', lastAction.customerId).single();
+                    if (cust) await supabase.from('customers').update({ balance: Math.max(0, (cust.balance || 0) - lastAction.amount) }).eq('id', lastAction.customerId);
+                  }
+                } else if (lastAction.kind === 'return') {
+                  // set bottle back to assigned to prev customer
+                  if (lastAction.prevCustomerId) {
+                    await supabase.from('bottles').update({ current_customer_id: lastAction.prevCustomerId, is_returned: false }).eq('id', lastAction.bottleId);
+                  } else {
+                    await supabase.from('bottles').update({ is_returned: false }).eq('id', lastAction.bottleId);
+                  }
+                }
+                setLastAction(prev => (prev ? { ...prev, used: true } : prev));
+                toast({ title: 'Undone', description: 'Last action has been reverted' });
+                fetchBottles();
+              } catch (e: any) {
+                toast({ variant: 'destructive', title: 'Undo failed', description: e.message });
+              }
+            }}
+            disabled={!lastAction || lastAction.used}
+            title={lastAction && !lastAction.used ? 'Undo last action' : 'Nothing to undo'}
+          >
+            Undo
+          </Button>
+        </div>
+      </div>
+
+      <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+        <DialogTrigger asChild>
+          <Button>
+            <Plus className="h-4 w-4 mr-2" />
+            Add Bottles
+          </Button>
+        </DialogTrigger>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Add New Bottles</DialogTitle>
+            <DialogDescription>
+              Add bottles to your inventory
+            </DialogDescription>
+          </DialogHeader>
+          
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div>
+              <Label htmlFor="bottle_type">Bottle Type</Label>
+              <Select value={newBottleType} onValueChange={(v: 'normal' | 'cool') => setNewBottleType(v)}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select bottle type" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="normal">Normal</SelectItem>
+                  <SelectItem value="cool">Cool</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            
+            <div>
+              <Label htmlFor="quantity">Quantity</Label>
+              <Input
+                id="quantity"
+                name="quantity"
+                type="number"
+                min="1"
+                defaultValue="1"
+                required
+              />
+            </div>
+            
+            <Button type="submit" className="w-full">
               Add Bottles
             </Button>
-          </DialogTrigger>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Add New Bottles</DialogTitle>
-              <DialogDescription>
-                Add bottles to your inventory
-              </DialogDescription>
-            </DialogHeader>
-            
-            <form onSubmit={handleSubmit} className="space-y-4">
-              <div>
-                <Label htmlFor="bottle_type">Bottle Type</Label>
-                <Select value={newBottleType} onValueChange={(v: 'normal' | 'cool') => setNewBottleType(v)}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select bottle type" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="normal">Normal</SelectItem>
-                    <SelectItem value="cool">Cool</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              
-              <div>
-                <Label htmlFor="quantity">Quantity</Label>
-                <Input
-                  id="quantity"
-                  name="quantity"
-                  type="number"
-                  min="1"
-                  defaultValue="1"
-                  required
-                />
-              </div>
-              
-              <Button type="submit" className="w-full">
-                Add Bottles
-              </Button>
-            </form>
-          </DialogContent>
+          </form>
+        </DialogContent>
         </Dialog>
-      </div>
 
       {/* Stats Cards: 2x2 on mobile, 4 across on md+ */}
       <div className="grid gap-4 grid-cols-2 md:grid-cols-4">
@@ -681,16 +744,44 @@ const Bottles = () => {
               {/* Recent transactions per bottle */}
               <div>
                 <p className="text-sm text-muted-foreground">Recent activity:</p>
-                <ul className="text-sm list-disc pl-5">
-                  {(recentTxMap[bottle.bottle_number] || []).map((tx) => (
-                    <li key={tx.id}>
-                      {tx.transaction_type} • {new Date(tx.transaction_date).toLocaleString()} {tx.notes ? `• ${tx.notes}` : ''}
-                    </li>
-                  ))}
-                  {!(recentTxMap[bottle.bottle_number]?.length) && (
-                    <li className="text-muted-foreground">No recent activity</li>
-                  )}
-                </ul>
+                {(() => {
+                  const list = recentTxMap[bottle.bottle_number] || [];
+                  if (list.length === 0) {
+                    return <div className="text-sm text-muted-foreground">No recent activity</div>;
+                  }
+                  const expanded = !!expandedActivity[bottle.bottle_number];
+                  const visible = expanded ? list : list.slice(0, 1);
+                  return (
+                    <div className="space-y-1">
+                      <ul className="text-sm list-disc pl-5">
+                        {visible.map((tx) => {
+                          const person = tx.transaction_type === 'delivery' ? customerMap[tx.customer_id] : undefined;
+                          return (
+                            <li key={tx.id}>
+                              {tx.transaction_type} • {new Date(tx.transaction_date).toLocaleString()} {person ? `• ${person.name} (PIN: ${person.pin})` : ''} {tx.notes ? `• ${tx.notes}` : ''}
+                            </li>
+                          );
+                        })}
+                      </ul>
+                      {list.length > 1 && (
+                        <div>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() =>
+                              setExpandedActivity((prev) => ({
+                                ...prev,
+                                [bottle.bottle_number]: !expanded,
+                              }))
+                            }
+                          >
+                            {expanded ? 'Show less' : `Show more (${list.length - 1} more)`}
+                          </Button>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
               </div>
             </CardContent>
           </Card>
