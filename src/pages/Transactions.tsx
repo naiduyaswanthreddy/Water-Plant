@@ -62,6 +62,7 @@ const Transactions = () => {
   const [selectedBottleIds, setSelectedBottleIds] = useState<string[]>([]);
   const [withCustomer, setWithCustomer] = useState<Array<{ id: string; bottle_number: string; bottle_type: 'normal' | 'cool' }>>([]);
   const [customerSearch, setCustomerSearch] = useState('');
+  const [customerListOpen, setCustomerListOpen] = useState(false);
 
   useEffect(() => {
     if (!user) return;
@@ -323,30 +324,43 @@ const Transactions = () => {
             
             <form onSubmit={handleSubmit} className="space-y-4">
               <div>
-                <Label htmlFor="customer_id">Customer *</Label>
-                <div className="space-y-2">
+                <Label htmlFor="customer_search">Customer *</Label>
+                <input type="hidden" name="customer_id" value={formCustomerId} />
+                <div className="space-y-2 relative">
                   <Input
-                    placeholder="Search by name"
+                    id="customer_search"
+                    placeholder={formCustomerId ? customers.find(c => c.id === formCustomerId)?.name || 'Search customer' : 'Search customer'}
                     value={customerSearch}
-                    onChange={(e) => setCustomerSearch(e.target.value)}
+                    onFocus={() => setCustomerListOpen(true)}
+                    onChange={(e) => { setCustomerSearch(e.target.value); setCustomerListOpen(true); }}
+                    onBlur={() => setTimeout(() => setCustomerListOpen(false), 150)}
                     className="bg-white"
                   />
-                  <Select name="customer_id" required onValueChange={(v) => { setFormCustomerId(v); }}>
-                    <SelectTrigger className="bg-white">
-                      <SelectValue placeholder="Select customer" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {(customers.filter(c => {
-                        const term = customerSearch.trim().toLowerCase();
-                        if (!term) return true;
-                        return c.name.toLowerCase().includes(term);
-                      })).map((customer) => (
-                        <SelectItem key={customer.id} value={customer.id}>
-                          {customer.name} ({customer.pin})
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  {customerListOpen && (
+                    <div className="absolute z-50 mt-1 w-full max-h-56 overflow-auto border rounded-md bg-white shadow">
+                      {customers
+                        .filter(c => {
+                          const term = customerSearch.trim().toLowerCase();
+                          if (!term) return true;
+                          return c.name.toLowerCase().includes(term);
+                        })
+                        .slice(0, 50)
+                        .map((c) => (
+                          <button
+                            key={c.id}
+                            type="button"
+                            onMouseDown={(e) => e.preventDefault()}
+                            onClick={() => { setFormCustomerId(c.id); setCustomerSearch(c.name); setCustomerListOpen(false); }}
+                            className={`w-full text-left px-3 py-2 hover:bg-gray-100 ${formCustomerId === c.id ? 'bg-gray-50' : ''}`}
+                          >
+                            {c.name} ({c.pin})
+                          </button>
+                        ))}
+                      {customers.filter(c => c.name.toLowerCase().includes(customerSearch.trim().toLowerCase())).length === 0 && (
+                        <div className="px-3 py-2 text-sm text-muted-foreground">No results</div>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
               
