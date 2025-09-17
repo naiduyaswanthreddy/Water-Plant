@@ -70,6 +70,60 @@ const Transactions = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]);
 
+  // Realtime: refresh transactions list, customers, and inventory on changes
+  useEffect(() => {
+    if (!user) return;
+    let debounce: number | undefined;
+    const schedule = (fn: () => void) => {
+      if (debounce) window.clearTimeout(debounce);
+      debounce = window.setTimeout(fn, 250);
+    };
+    const channel = supabase
+      .channel('realtime-transactions-page')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'transactions' }, (payload: any) => {
+        const tx = payload.new as any;
+        if (!tx || tx.owner_user_id === user.id) {
+          // Fine-grained local update to the visible list
+          setTransactions((prev) => {
+            const list = [...prev];
+            if (payload.eventType === 'INSERT' && payload.new) {
+              return [payload.new as any, ...list];
+            }
+            if (payload.eventType === 'UPDATE' && payload.new) {
+              const idx = list.findIndex((t) => t.id === (payload.new as any).id);
+              if (idx >= 0) list[idx] = { ...(list[idx] as any), ...(payload.new as any) } as any;
+              return list;
+            }
+            if (payload.eventType === 'DELETE' && payload.old) {
+              return list.filter((t) => t.id !== (payload.old as any).id);
+            }
+            return list;
+          });
+          // Debounced safety refresh to keep related data in sync
+          schedule(() => fetchData());
+        }
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'customers' }, (payload: any) => {
+        const row = (payload.new || payload.old) as any;
+        if (!row || row.owner_user_id === user.id) schedule(() => fetchData());
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'bottles' }, (payload: any) => {
+        const row = (payload.new || payload.old) as any;
+        if (!row || row.owner_user_id === user.id) schedule(() => fetchData());
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'pricing' }, (payload: any) => {
+        const row = (payload.new || payload.old) as any;
+        if (!row || row.owner_user_id === user.id) schedule(() => fetchData());
+      })
+      .subscribe();
+
+    return () => {
+      if (debounce) window.clearTimeout(debounce);
+      supabase.removeChannel(channel);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
+
   // Load bottles currently with selected customer for Return
   useEffect(() => {
     const loadWithCustomer = async () => {

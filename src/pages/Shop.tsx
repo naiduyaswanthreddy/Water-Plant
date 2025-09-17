@@ -3,7 +3,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { SegmentedToggle } from '@/components/ui/segmented-toggle';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import { Users, ShoppingCart, Package } from 'lucide-react';
@@ -67,6 +67,145 @@ const Shop = () => {
     fetchInStock();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]);
+
+  // Realtime: keep inventory, customers, and withCustomer in sync
+  useEffect(() => {
+    if (!user) return;
+    let debounce: number | undefined;
+    const schedule = (fn: () => void) => {
+      if (debounce) window.clearTimeout(debounce);
+      debounce = window.setTimeout(fn, 250);
+    };
+    const channel = supabase
+      .channel('realtime-shop-page')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'bottles' }, async (payload: any) => {
+        const row = (payload.new || payload.old) as any;
+        if (!row || row.owner_user_id === user.id) {
+          // Fine-grained inStock updates (only bottles with is_returned=true belong in inventory)
+          setInStock((prev) => {
+            const list = [...prev];
+            const n = payload.new as any;
+            const o = payload.old as any;
+            const indexOf = (id: string) => list.findIndex((b) => b.id === id);
+            if (payload.eventType === 'INSERT' && n) {
+              if (n.is_returned) {
+                return [...list, { id: n.id, bottle_number: n.bottle_number, bottle_type: n.bottle_type, is_returned: n.is_returned }];
+              }
+              return list;
+            }
+            if (payload.eventType === 'UPDATE' && n) {
+              const idx = indexOf(n.id);
+              if (n.is_returned) {
+                // Ensure present and updated
+                if (idx >= 0) {
+                  list[idx] = { id: n.id, bottle_number: n.bottle_number, bottle_type: n.bottle_type, is_returned: n.is_returned };
+                  return list;
+                }
+                return [...list, { id: n.id, bottle_number: n.bottle_number, bottle_type: n.bottle_type, is_returned: n.is_returned }];
+              } else {
+                // No longer in stock
+                if (idx >= 0) {
+                  list.splice(idx, 1);
+                }
+                return list;
+              }
+            }
+            if (payload.eventType === 'DELETE' && o) {
+              const idx = indexOf(o.id);
+              if (idx >= 0) list.splice(idx, 1);
+              return list;
+            }
+            return list;
+          });
+
+          schedule(async () => {
+            await fetchInStock();
+          });
+          // Refresh withCustomer if a customer is selected
+          if (selectedCustomerId) {
+            // Fine-grained withCustomer updates
+            setWithCustomer((prev) => {
+              const list = [...prev];
+              const n = payload.new as any;
+              const o = payload.old as any;
+              const indexOf = (id: string) => list.findIndex((b) => b.id === id);
+              const belongsNow = n && n.current_customer_id === selectedCustomerId && n.is_returned === false;
+              const belongedBefore = o && o.current_customer_id === selectedCustomerId && o.is_returned === false;
+              if (payload.eventType === 'INSERT' && n) {
+                if (belongsNow) return [...list, { id: n.id, bottle_number: n.bottle_number, bottle_type: n.bottle_type, is_returned: false }];
+                return list;
+              }
+              if (payload.eventType === 'UPDATE' && n) {
+                const idx = indexOf(n.id);
+                if (belongsNow) {
+                  if (idx >= 0) {
+                    list[idx] = { id: n.id, bottle_number: n.bottle_number, bottle_type: n.bottle_type, is_returned: false };
+                    return list;
+                  }
+                  return [...list, { id: n.id, bottle_number: n.bottle_number, bottle_type: n.bottle_type, is_returned: false }];
+                } else if (belongedBefore && !belongsNow) {
+                  if (idx >= 0) list.splice(idx, 1);
+                  return list;
+                }
+                return list;
+              }
+              if (payload.eventType === 'DELETE' && o) {
+                const idx = indexOf(o.id);
+                if (idx >= 0) list.splice(idx, 1);
+                return list;
+              }
+              return list;
+            });
+            schedule(async () => {
+              const { data } = await supabase
+                .from('bottles')
+                .select('id, bottle_number, bottle_type, is_returned')
+                .eq('owner_user_id', user.id)
+                .eq('current_customer_id', selectedCustomerId)
+                .eq('is_returned', false)
+                .order('bottle_number');
+              setWithCustomer((data || []) as any);
+            });
+          }
+        }
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'customers' }, async (payload: any) => {
+        const row = (payload.new || payload.old) as any;
+        if (!row || row.owner_user_id === user.id) {
+          schedule(async () => {
+            await fetchCustomers();
+          });
+        }
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'transactions' }, async (payload: any) => {
+        const tx = payload.new as any;
+        if (tx && tx.owner_user_id === user.id) {
+          // Transactions can change balances and bottle assignments via triggers; refresh key lists
+          schedule(async () => {
+            await fetchInStock();
+          });
+          if (selectedCustomerId) {
+            schedule(async () => {
+              const { data } = await supabase
+                .from('bottles')
+                .select('id, bottle_number, bottle_type, is_returned')
+                .eq('owner_user_id', user.id)
+                .eq('current_customer_id', selectedCustomerId)
+                .eq('is_returned', false)
+                .order('bottle_number');
+              setWithCustomer((data || []) as any);
+            });
+          }
+        }
+      })
+      .subscribe();
+
+    return () => {
+      if (debounce) window.clearTimeout(debounce);
+      supabase.removeChannel(channel);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id, selectedCustomerId]);
 
   useEffect(() => {
     const fetchWithCustomer = async () => {
@@ -358,21 +497,23 @@ const Shop = () => {
 
       <div className="grid md:grid-cols-3 gap-4">
         <Card>
-          <CardHeader className="pb-2"><CardTitle className="text-base">Mode</CardTitle><CardDescription>Guest or Customer</CardDescription></CardHeader>
+          <CardHeader className="pb-2"><CardTitle className="text-base">Mode</CardTitle><CardDescription></CardDescription></CardHeader>
           <CardContent className="space-y-3">
-            <Select value={mode} onValueChange={(v: any) => {
-              setMode(v);
-              if (v === 'guest') {
-                setActionMode('fill_only');
-                setSelectedBottleIds([]);
-              }
-            }}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="guest">Guest</SelectItem>
-                <SelectItem value="customer">Customer</SelectItem>
-              </SelectContent>
-            </Select>
+            <SegmentedToggle
+              size="sm"
+              value={mode}
+              onChange={(v) => {
+                setMode(v as 'guest' | 'customer');
+                if (v === 'guest') {
+                  setActionMode('fill_only');
+                  setSelectedBottleIds([]);
+                }
+              }}
+              options={[
+                { value: 'guest', label: 'Guest' },
+                { value: 'customer', label: 'Customer' },
+              ]}
+            />
 
             {mode === 'customer' && (
               <div>
@@ -423,38 +564,40 @@ const Shop = () => {
         </Card>
 
         <Card className="md:col-span-2">
-          <CardHeader className="pb-2"><CardTitle className="text-base">Record Sale</CardTitle><CardDescription>Fill only or Bottle + Water</CardDescription></CardHeader>
+          <CardHeader className="pb-2"><CardTitle className="text-base">Record Sale</CardTitle><CardDescription></CardDescription></CardHeader>
           <CardContent className="space-y-3">
             <div className="grid grid-cols-3 gap-3">
               <div>
                 <Label>Action</Label>
-                <Select value={actionMode} onValueChange={(v: any) => {
-                  if (mode === 'guest' && v === 'bottle_and_water') return; // disallow in guest mode
-                  setActionMode(v);
-                  setSelectedBottleIds([]);
-                  setAmount('');
-                }}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="fill_only">Filling (no bottle)</SelectItem>
-                    <SelectItem value="bottle_and_water" disabled={mode === 'guest'}>
-                      Bottle + Water
-                    </SelectItem>
-                  </SelectContent>
-                </Select>
+                <SegmentedToggle
+                  size="sm"
+                  value={actionMode}
+                  onChange={(v) => {
+                    if (mode === 'guest' && v === 'bottle_and_water') return; // disallow in guest mode
+                    setActionMode(v as 'fill_only' | 'bottle_and_water');
+                    setSelectedBottleIds([]);
+                    setAmount('');
+                  }}
+                  options={[
+                    { value: 'fill_only', label: 'Fill only' },
+                    { value: 'bottle_and_water', label: 'Bottle + Water' },
+                  ]}
+                />
                 {mode === 'guest' && (
                   <div className="text-xs text-muted-foreground mt-1">Bottle + Water requires selecting a customer.</div>
                 )}
               </div>
               <div>
                 <Label>Bottle Type</Label>
-                <Select value={bottleType} onValueChange={(v: any) => setBottleType(v)}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="normal">Normal</SelectItem>
-                    <SelectItem value="cool">Cool</SelectItem>
-                  </SelectContent>
-                </Select>
+                <SegmentedToggle
+                  size="sm"
+                  value={bottleType}
+                  onChange={(v) => setBottleType(v as 'normal' | 'cool')}
+                  options={[
+                    { value: 'normal', label: 'Normal' },
+                    { value: 'cool', label: 'Cool' },
+                  ]}
+                />
               </div>
               <div>
                 <Label>Quantity</Label>
@@ -469,7 +612,7 @@ const Shop = () => {
                     const ctype = mode === 'guest' ? 'shop' : (customers.find(c => c.id === selectedCustomerId)?.customer_type || 'shop');
                     const p = getUnitPrice(ctype as any, bottleType);
                     const calc = p !== undefined ? p * quantity : undefined;
-                    return p !== undefined ? `Price: ₹${p.toFixed(2)} • Total: ₹${calc!.toFixed(2)}` : 'Pricing not set';
+                    return p !== undefined ? `Price: ₹${p.toFixed(2)}` : 'Pricing not set';
                   })()}
                 </div>
                 <div>

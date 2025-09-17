@@ -40,6 +40,28 @@ const Dashboard = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]);
 
+  // Realtime: refresh dashboard KPIs when core tables change
+  useEffect(() => {
+    if (!user) return;
+    let debounce: number | undefined;
+    const schedule = (fn: () => void) => {
+      if (debounce) window.clearTimeout(debounce);
+      debounce = window.setTimeout(fn, 250);
+    };
+    const channel = supabase
+      .channel('realtime-dashboard')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'customers' }, () => schedule(() => fetchDashboardStats()))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'bottles' }, () => schedule(() => fetchDashboardStats()))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'transactions' }, () => schedule(() => fetchDashboardStats()))
+      .subscribe();
+
+    return () => {
+      if (debounce) window.clearTimeout(debounce);
+      supabase.removeChannel(channel);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
+
   const fetchDashboardStats = async () => {
     try {
       setLoading(true);

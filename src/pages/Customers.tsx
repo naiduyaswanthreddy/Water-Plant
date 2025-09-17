@@ -59,6 +59,71 @@ const Customers = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]);
 
+  // Realtime updates: refresh customers list and active customer's transactions
+  useEffect(() => {
+    if (!user) return;
+    let debounce: number | undefined;
+    const schedule = (fn: () => void) => {
+      if (debounce) window.clearTimeout(debounce);
+      debounce = window.setTimeout(fn, 250);
+    };
+    const channel = supabase
+      .channel('realtime-customers-page')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'customers' },
+        (payload: any) => {
+          const row = (payload.new || payload.old) as any;
+          if (row && row.owner_user_id && row.owner_user_id !== user.id) return;
+          // Fine-grained local updates
+          setCustomers((prev) => {
+            const list = [...prev];
+            if (payload.eventType === 'INSERT' && payload.new) {
+              // Prepend new customer
+              return [payload.new as any, ...list];
+            }
+            if (payload.eventType === 'UPDATE' && payload.new) {
+              const idx = list.findIndex((c) => c.id === (payload.new as any).id);
+              if (idx >= 0) list[idx] = { ...(list[idx] as any), ...(payload.new as any) };
+              return list;
+            }
+            if (payload.eventType === 'DELETE' && payload.old) {
+              return list.filter((c) => c.id !== (payload.old as any).id);
+            }
+            return list;
+          });
+          // Sync active customer in details dialog
+          if (activeCustomer && row && row.id === activeCustomer.id) {
+            setActiveCustomer((prev) => (prev ? { ...prev, ...(payload.new || {}) } as any : prev));
+          }
+          // Debounced safety refetch (in case of missed rows or order changes)
+          schedule(() => fetchCustomers());
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'transactions' },
+        (payload: any) => {
+          const tx = payload.new as any;
+          if (tx && tx.owner_user_id === user.id) {
+            // Transactions can affect balances; debounce refetch
+            schedule(() => fetchCustomers());
+            // If the dialog is open for a specific customer, refresh their recent transactions
+            if (activeCustomer && tx.customer_id === activeCustomer.id) {
+              fetchTransactions(activeCustomer.id, 0, true);
+            }
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      if (debounce) window.clearTimeout(debounce);
+      supabase.removeChannel(channel);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id, activeCustomer?.id]);
+
   // Sync address field when opening dialog or switching editing target
   useEffect(() => {
     if (isDialogOpen) {

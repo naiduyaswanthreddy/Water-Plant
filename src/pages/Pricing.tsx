@@ -37,6 +37,41 @@ const Pricing = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]);
 
+  // Realtime: refresh pricing list on changes
+  useEffect(() => {
+    if (!user) return;
+    const channel = supabase
+      .channel('realtime-pricing-page')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'pricing' }, (payload: any) => {
+        const row = (payload.new || payload.old) as any;
+        if (!row || row.owner_user_id === user.id) {
+          // Fine-grained local update
+          setPricings((prev) => {
+            const list = [...prev];
+            if (payload.eventType === 'INSERT' && payload.new) {
+              return [payload.new as any, ...list];
+            }
+            if (payload.eventType === 'UPDATE' && payload.new) {
+              const idx = list.findIndex((p) => p.id === (payload.new as any).id);
+              if (idx >= 0) list[idx] = { ...(list[idx] as any), ...(payload.new as any) };
+              return list;
+            }
+            if (payload.eventType === 'DELETE' && payload.old) {
+              return list.filter((p) => p.id !== (payload.old as any).id);
+            }
+            return list;
+          });
+          // Safety refetch to maintain sort order
+          fetchPricings();
+        }
+      })
+      .subscribe();
+    return () => {
+      supabase.removeChannel(channel);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
+
   const fetchPricings = async () => {
     try {
       const { data, error } = await supabase

@@ -6,6 +6,7 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { SegmentedToggle } from '@/components/ui/segmented-toggle';
 import { Badge } from '@/components/ui/badge';
 import { Textarea } from '@/components/ui/textarea';
 import { supabase } from '@/integrations/supabase/client';
@@ -73,6 +74,67 @@ const FunctionOrders = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]);
 
+  // Realtime: keep orders view in sync
+  useEffect(() => {
+    if (!user) return;
+    let debounce: number | undefined;
+    const schedule = (fn: () => void) => {
+      if (debounce) window.clearTimeout(debounce);
+      debounce = window.setTimeout(fn, 250);
+    };
+    const channel = supabase
+      .channel('realtime-function-orders-page')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'function_orders' }, (payload: any) => {
+        // Fine-grained local updates for orders list
+        setOrders((prev) => {
+          const list = [...prev];
+          if (payload.eventType === 'INSERT' && payload.new) {
+            return [payload.new as any, ...list];
+          }
+          if (payload.eventType === 'UPDATE' && payload.new) {
+            const idx = list.findIndex((o) => o.id === (payload.new as any).id);
+            if (idx >= 0) list[idx] = { ...(list[idx] as any), ...(payload.new as any) } as any;
+            return list;
+          }
+          if (payload.eventType === 'DELETE' && payload.old) {
+            return list.filter((o) => o.id !== (payload.old as any).id);
+          }
+          return list;
+        });
+        // Debounced safety fetch to sync related data and sorts
+        schedule(() => fetchData());
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'function_order_bottles' }, (payload: any) => {
+        // If currently editing an order, refresh its withCustomer list when mapping changes
+        if (editingOrder) {
+          schedule(() => fetchWithCustomerForOrder(editingOrder));
+        }
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'bottles' }, () => {
+        schedule(() => fetchData());
+        if (editingOrder && activeTab === 'receiving') {
+          schedule(() => fetchWithCustomerForOrder(editingOrder));
+        }
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'customers' }, () => {
+        schedule(() => fetchData());
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'pricing' }, () => {
+        schedule(() => fetchData());
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'transactions' }, () => {
+        // Transactions affect balances and inferred mapping; keep in sync
+        if (editingOrder) schedule(() => fetchWithCustomerForOrder(editingOrder));
+      })
+      .subscribe();
+
+    return () => {
+      if (debounce) window.clearTimeout(debounce);
+      supabase.removeChannel(channel);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id, editingOrder?.id, activeTab]);
+
   const fetchData = async () => {
     try {
       const [ordersResult, customersResult, bottlesResult, pricingResult] = await Promise.all([
@@ -108,7 +170,7 @@ const FunctionOrders = () => {
   const fetchWithCustomerForOrder = async (order: FunctionOrder) => {
     // Try mapping table first
     try {
-      const { data, error } = await (supabase as any)
+      const { data, error } = await supabase
         .from('function_order_bottles')
         .select('bottle_id, bottle_number, bottle_type, received')
         .eq('owner_user_id', user!.id)
@@ -157,9 +219,9 @@ const FunctionOrders = () => {
           owner_user_id: user!.id,
         }));
         if (rows.length > 0) {
-          await ((supabase as any)
-            .from('function_order_bottles') as any)
-            .upsert(rows, { onConflict: 'order_id,bottle_id', ignoreDuplicates: true });
+          await supabase
+            .from('function_order_bottles')
+            .upsert(rows as any, { onConflict: 'order_id,bottle_id', ignoreDuplicates: true });
         }
       }
     } catch {}
@@ -308,9 +370,9 @@ const FunctionOrders = () => {
             bottle_type: b.bottle_type,
             owner_user_id: user!.id,
           }));
-          const { error: mapErr } = await (supabase
-            .from('function_order_bottles') as any)
-            .upsert(rows, { onConflict: 'order_id,bottle_id', ignoreDuplicates: true });
+          const { error: mapErr } = await supabase
+            .from('function_order_bottles')
+            .upsert(rows as any, { onConflict: 'order_id,bottle_id', ignoreDuplicates: true });
           if (mapErr) throw mapErr;
         }
       } else if (activeTab === 'receiving') {
@@ -328,7 +390,7 @@ const FunctionOrders = () => {
             .in('id', returnBottleIds);
           if (updErr) throw updErr;
           // Mark mapping rows as received
-          const { error: mapErr } = await (supabase as any)
+          const { error: mapErr } = await supabase
             .from('function_order_bottles')
             .update({ received: true, received_at: new Date().toISOString() })
             .in('bottle_id', returnBottleIds)
@@ -426,9 +488,9 @@ const FunctionOrders = () => {
             bottle_type: b.bottle_type,
             owner_user_id: user!.id,
           }));
-          const { error: mapInsErr } = await (supabase
-            .from('function_order_bottles') as any)
-            .upsert(rows, { onConflict: 'order_id,bottle_id', ignoreDuplicates: true });
+          const { error: mapInsErr } = await supabase
+            .from('function_order_bottles')
+            .upsert(rows as any, { onConflict: 'order_id,bottle_id', ignoreDuplicates: true });
           if (mapInsErr) throw mapInsErr;
         }
 
@@ -597,26 +659,23 @@ const FunctionOrders = () => {
             
             <form onSubmit={handleSubmit} className="space-y-4">
               {editingOrder && (
-                <div className="flex gap-2">
-                  <Button
-                    type="button"
-                    variant={activeTab === 'giving' ? 'default' : 'outline'}
+                <div>
+                  <Label className="mb-1 block">Mode</Label>
+                  <SegmentedToggle
                     size="sm"
-                    onClick={() => setActiveTab('giving')}
-                  >
-                    Giving
-                  </Button>
-                  <Button
-                    type="button"
-                    variant={activeTab === 'receiving' ? 'default' : 'outline'}
-                    size="sm"
-                    onClick={() => {
-                      setActiveTab('receiving');
-                      if (editingOrder) fetchWithCustomerForOrder(editingOrder);
+                    value={activeTab}
+                    onChange={(v) => {
+                      const next = (v as 'giving' | 'receiving');
+                      setActiveTab(next);
+                      if (next === 'receiving' && editingOrder) {
+                        fetchWithCustomerForOrder(editingOrder);
+                      }
                     }}
-                  >
-                    Receiving
-                  </Button>
+                    options={[
+                      { value: 'giving', label: 'Giving' },
+                      { value: 'receiving', label: 'Receiving' },
+                    ]}
+                  />
                 </div>
               )}
               <div className="grid grid-cols-2 gap-4">

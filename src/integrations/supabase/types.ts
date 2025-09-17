@@ -155,6 +155,57 @@ export type Database = {
           },
         ]
       }
+      function_order_bottles: {
+        Row: {
+          id: string
+          order_id: string
+          bottle_id: string | null
+          bottle_number: string
+          bottle_type: Database["public"]["Enums"]["bottle_type"]
+          delivered_at: string
+          received: boolean
+          received_at: string | null
+          owner_user_id: string | null
+        }
+        Insert: {
+          id?: string
+          order_id: string
+          bottle_id?: string | null
+          bottle_number: string
+          bottle_type: Database["public"]["Enums"]["bottle_type"]
+          delivered_at?: string | null
+          received?: boolean
+          received_at?: string | null
+          owner_user_id?: string | null
+        }
+        Update: {
+          id?: string
+          order_id?: string
+          bottle_id?: string | null
+          bottle_number?: string
+          bottle_type?: Database["public"]["Enums"]["bottle_type"]
+          delivered_at?: string | null
+          received?: boolean
+          received_at?: string | null
+          owner_user_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "function_order_bottles_order_id_fkey"
+            columns: ["order_id"]
+            isOneToOne: false
+            referencedRelation: "function_orders"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "function_order_bottles_bottle_id_fkey"
+            columns: ["bottle_id"]
+            isOneToOne: false
+            referencedRelation: "bottles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       pricing: {
         Row: {
           bottle_type: Database["public"]["Enums"]["bottle_type"]

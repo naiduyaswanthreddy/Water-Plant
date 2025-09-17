@@ -40,6 +40,42 @@ const Staff = () => {
     fetchData();
   }, []);
 
+  // Realtime: refresh staff and routes when either table changes
+  useEffect(() => {
+    let debounce: number | undefined;
+    const schedule = (fn: () => void) => {
+      if (debounce) window.clearTimeout(debounce);
+      debounce = window.setTimeout(fn, 250);
+    };
+    const channel = supabase
+      .channel('realtime-staff-page')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'staff' }, (payload: any) => {
+        // Fine-grained local updates
+        setStaff((prev) => {
+          const list = [...prev];
+          if (payload.eventType === 'INSERT' && payload.new) {
+            return [payload.new as any, ...list];
+          }
+          if (payload.eventType === 'UPDATE' && payload.new) {
+            const idx = list.findIndex((s) => s.id === (payload.new as any).id);
+            if (idx >= 0) list[idx] = { ...(list[idx] as any), ...(payload.new as any) } as any;
+            return list;
+          }
+          if (payload.eventType === 'DELETE' && payload.old) {
+            return list.filter((s) => s.id !== (payload.old as any).id);
+          }
+          return list;
+        });
+        schedule(() => fetchData());
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'routes' }, () => schedule(() => fetchData()))
+      .subscribe();
+    return () => {
+      if (debounce) window.clearTimeout(debounce);
+      supabase.removeChannel(channel);
+    };
+  }, []);
+
   const fetchData = async () => {
     try {
       const [staffResult, routesResult] = await Promise.all([

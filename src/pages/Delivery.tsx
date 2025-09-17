@@ -5,7 +5,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { Badge } from '@/components/ui/badge';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
@@ -75,6 +75,96 @@ const Delivery = () => {
   useEffect(() => {
     if (!user) return;
     fetchData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
+
+  // Realtime: keep delivery view in sync when core tables change
+  useEffect(() => {
+    if (!user) return;
+    let debounce: number | undefined;
+    const schedule = (fn: () => void) => {
+      if (debounce) window.clearTimeout(debounce);
+      debounce = window.setTimeout(fn, 250);
+    };
+    const channel = supabase
+      .channel('realtime-delivery-page')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'transactions' }, (payload: any) => {
+        const tx = payload.new as any;
+        if (!tx || tx.owner_user_id === user.id) {
+          // Fine-grained map updates for today's delivery/skip markers
+          const isTodayTx = (iso: string) => {
+            if (!iso) return false;
+            const d = new Date(iso);
+            const todayStart = new Date(); todayStart.setHours(0,0,0,0);
+            const tomorrowStart = new Date(todayStart); tomorrowStart.setDate(todayStart.getDate() + 1);
+            return d >= todayStart && d < tomorrowStart;
+          };
+          if (payload.eventType === 'INSERT' && tx.transaction_type === 'delivery' && isTodayTx(tx.transaction_date)) {
+            if ((tx.quantity || 0) > 0) {
+              setDeliveredToday((prev) => ({ ...prev, [tx.customer_id]: true }));
+            } else {
+              setSkippedToday((prev) => ({ ...prev, [tx.customer_id]: true }));
+            }
+            return; // no need to refetch for simple inserts
+          }
+          // For UPDATE/DELETE we may need to unset flags; fall back to debounced fetch
+          schedule(() => fetchData());
+        }
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'bottles' }, (payload: any) => {
+        const row = (payload.new || payload.old) as any;
+        if (!row || row.owner_user_id === user.id) {
+          // Fine-grained update to inStock list (bottles with is_returned=true)
+          setInStock((prev) => {
+            const list = [...prev];
+            const n = payload.new as any;
+            const o = payload.old as any;
+            const indexOf = (id: string) => list.findIndex((b) => b.id === id);
+            if (payload.eventType === 'INSERT' && n) {
+              if (n.is_returned) return [...list, { id: n.id, bottle_number: n.bottle_number, bottle_type: n.bottle_type, is_returned: n.is_returned }];
+              return list;
+            }
+            if (payload.eventType === 'UPDATE' && n) {
+              const idx = indexOf(n.id);
+              if (n.is_returned) {
+                if (idx >= 0) {
+                  list[idx] = { id: n.id, bottle_number: n.bottle_number, bottle_type: n.bottle_type, is_returned: n.is_returned };
+                  return list;
+                }
+                return [...list, { id: n.id, bottle_number: n.bottle_number, bottle_type: n.bottle_type, is_returned: n.is_returned }];
+              } else {
+                if (idx >= 0) list.splice(idx, 1);
+                return list;
+              }
+            }
+            if (payload.eventType === 'DELETE' && o) {
+              const idx = indexOf(o.id);
+              if (idx >= 0) list.splice(idx, 1);
+              return list;
+            }
+            return list;
+          });
+          schedule(() => fetchData());
+        }
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'customers' }, (payload: any) => {
+        const row = (payload.new || payload.old) as any;
+        if (!row || row.owner_user_id === user.id) {
+          schedule(() => fetchData());
+        }
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'pricing' }, (payload: any) => {
+        const row = (payload.new || payload.old) as any;
+        if (!row || row.owner_user_id === user.id) {
+          schedule(() => fetchData());
+        }
+      })
+      .subscribe();
+
+    return () => {
+      if (debounce) window.clearTimeout(debounce);
+      supabase.removeChannel(channel);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]);
 
@@ -604,30 +694,70 @@ const Delivery = () => {
               </div>
               <div>
                 <Label htmlFor="bottle_type">Bottle Type</Label>
-                <Select value={bottleType} onValueChange={(v: 'normal' | 'cool') => setBottleType(v)}>
-                  <SelectTrigger className="bg-white">
-                    <SelectValue placeholder="Select type" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="normal">Normal</SelectItem>
-                    <SelectItem value="cool">Cool</SelectItem>
-                  </SelectContent>
-                </Select>
+                <div className="mt-1">
+                  <ToggleGroup
+                    type="single"
+                    value={bottleType}
+                    onValueChange={(v) => v && setBottleType(v as 'normal' | 'cool')}
+                    className="relative grid grid-cols-2 items-center bg-white rounded-lg border p-1 overflow-hidden"
+                  >
+                    {/* Sliding indicator */}
+                    <div
+                      aria-hidden
+                      className={`absolute inset-y-1 left-1 w-[calc(50%-0.25rem)] rounded-md bg-[#0E6AA8] shadow-sm transition-transform duration-300 ease-out pointer-events-none transform ${bottleType === 'cool' ? 'translate-x-full' : 'translate-x-0'}`}
+                      style={{ zIndex: 0 }}
+                    />
+                    <ToggleGroupItem
+                      value="normal"
+                      aria-label="Normal"
+                      className="z-10 h-8 flex items-center justify-center px-3 rounded-md border border-transparent text-sm font-medium text-[#0E6AA8] transition-colors duration-200 hover:bg-transparent focus-visible:ring-0 focus-visible:outline-none data-[state=on]:bg-transparent data-[state=on]:text-white data-[state=on]:font-semibold data-[state=on]:shadow-none"
+                    >
+                      Normal
+                    </ToggleGroupItem>
+                    <ToggleGroupItem
+                      value="cool"
+                      aria-label="Cool"
+                      className="z-10 h-8 flex items-center justify-center px-3 rounded-md border border-transparent text-sm font-medium text-[#0E6AA8] transition-colors duration-200 hover:bg-transparent focus-visible:ring-0 focus-visible:outline-none data-[state=on]:bg-transparent data-[state=on]:text-white data-[state=on]:font-semibold data-[state=on]:shadow-none"
+                    >
+                      Cool
+                    </ToggleGroupItem>
+                  </ToggleGroup>
+                </div>
               </div>
             </div>
 
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <Label>Mode</Label>
-                <Select value={mode} onValueChange={(v: 'handover' | 'fill_only') => { setMode(v); setSelectedBottleIds([]); }}>
-                  <SelectTrigger className="bg-white">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="handover">Hand over bottles</SelectItem>
-                    <SelectItem value="fill_only">Fill only (no handover)</SelectItem>
-                  </SelectContent>
-                </Select>
+                <div className="mt-1">
+                  <ToggleGroup
+                    type="single"
+                    value={mode}
+                    onValueChange={(v) => v && (setMode(v as 'handover' | 'fill_only'), setSelectedBottleIds([]))}
+                    className="relative inline-grid w-fit grid-cols-2 items-center bg-white rounded-full border border-blue-200 p-1 h-10 overflow-hidden"
+                  >
+                    {/* Sliding indicator */}
+                    <div
+                      aria-hidden
+                      className={`absolute inset-y-1 left-1 w-[calc(50%-0.25rem)] rounded-full bg-[#0E6AA8] shadow-sm transition-transform duration-300 ease-out pointer-events-none transform ${mode === 'fill_only' ? 'translate-x-full' : 'translate-x-0'}`}
+                      style={{ zIndex: 0 }}
+                    />
+                    <ToggleGroupItem
+                      value="handover"
+                      aria-label="Hand over"
+                      className="z-10 h-8 flex items-center justify-center px-4 rounded-full border border-transparent text-sm font-medium text-[#0E6AA8] whitespace-nowrap transition-colors duration-200 hover:bg-transparent focus-visible:ring-0 focus-visible:outline-none data-[state=on]:bg-transparent data-[state=on]:text-white data-[state=on]:font-semibold data-[state=on]:shadow-none"
+                    >
+                      Handover
+                    </ToggleGroupItem>
+                    <ToggleGroupItem
+                      value="fill_only"
+                      aria-label="Fill only"
+                      className="z-10 h-8 flex items-center justify-center px-4 rounded-full border border-transparent text-sm font-medium text-[#0E6AA8] whitespace-nowrap transition-colors duration-200 hover:bg-transparent focus-visible:ring-0 focus-visible:outline-none data-[state=on]:bg-transparent data-[state=on]:text-white data-[state=on]:font-semibold data-[state=on]:shadow-none"
+                    >
+                      Fill only
+                    </ToggleGroupItem>
+                  </ToggleGroup>
+                </div>
               </div>
             </div>
 

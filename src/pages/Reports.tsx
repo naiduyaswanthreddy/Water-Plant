@@ -34,6 +34,13 @@ const Reports = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]);
 
+  // Auto-refresh when filters change (no need to click Apply)
+  useEffect(() => {
+    if (!user) return;
+    fetchReport();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [from, to, type]);
+
   const fetchReport = async () => {
     setLoading(true);
     try {
@@ -56,6 +63,30 @@ const Reports = () => {
       setLoading(false);
     }
   };
+
+  // Realtime refresh on transactions changes
+  useEffect(() => {
+    if (!user) return;
+    let timeout: number | undefined;
+    const schedule = () => {
+      if (timeout) window.clearTimeout(timeout);
+      timeout = window.setTimeout(() => {
+        fetchReport();
+      }, 300);
+    };
+    const ch = supabase
+      .channel('realtime-reports')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'transactions' }, (payload: any) => {
+        const row: any = payload.new || payload.old;
+        // Only refresh for current user
+        if (row && row.owner_user_id === user.id) schedule();
+      })
+      .subscribe();
+    return () => {
+      if (timeout) window.clearTimeout(timeout);
+      supabase.removeChannel(ch);
+    };
+  }, [user?.id, from, to, type]);
 
   const summary = useMemo(() => {
     const s = {
