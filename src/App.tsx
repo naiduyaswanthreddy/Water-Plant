@@ -27,7 +27,11 @@ const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
   const { user, loading } = useAuth();
   
   if (loading) {
-    return <div className="flex items-center justify-center min-h-screen">Loading...</div>;
+    return (
+      <div className="flex items-center justify-center min-h-screen">
+        <img src="/logo.png" alt="Logo" className="h-30 w-30" />
+      </div>
+    );
   }
   
   if (!user) {

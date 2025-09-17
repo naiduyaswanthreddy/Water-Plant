@@ -14,6 +14,7 @@ const PinGate = ({ children }: PinGateProps) => {
   const [pin, setPin] = useState('');
   const [checking, setChecking] = useState(true);
   const [unlocked, setUnlocked] = useState(false);
+  const [showSplash, setShowSplash] = useState(true);
   const { toast } = useToast();
 
   useEffect(() => {
@@ -21,6 +22,12 @@ const PinGate = ({ children }: PinGateProps) => {
     lock();
     setChecking(false);
   }, [lock]);
+
+  // Always show splash for at least 2 seconds before PIN prompt
+  useEffect(() => {
+    const t = setTimeout(() => setShowSplash(false), 1000);
+    return () => clearTimeout(t);
+  }, []);
 
   const handleUnlock = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -38,7 +45,14 @@ const PinGate = ({ children }: PinGateProps) => {
     }
   };
 
-  if (checking) return null;
+  // Initial splash screen while booting or within minimum splash duration
+  if (!unlocked && (checking || showSplash)) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <img src="/logo.png" alt="Logo" className="h-30 w-30 animate-fade-in" />
+      </div>
+    );
+  }
 
   if (!unlocked) {
     return (
