@@ -181,11 +181,12 @@ const Shop = () => {
   };
 
   const ensureGuestCustomer = async (): Promise<string> => {
-    // Use a dedicated Guest customer with pin 'GUEST'
+    // Use a dedicated Guest customer with a 4-char pin to satisfy DB constraint
+    const GUEST_PIN = 'G001';
     const { data: found } = await supabase
       .from('customers')
       .select('id')
-      .eq('pin', 'GUEST')
+      .eq('pin', GUEST_PIN)
       .eq('owner_user_id', user!.id)
       .single();
     if (found?.id) return found.id;
@@ -195,7 +196,7 @@ const Shop = () => {
       .from('customers')
       .insert({
         name: 'Guest',
-        pin: 'GUEST',
+        pin: GUEST_PIN,
         customer_type: 'shop',
         delivery_type: 'daily',
         balance: 0,
