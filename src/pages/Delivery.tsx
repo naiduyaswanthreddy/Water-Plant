@@ -42,6 +42,7 @@ const Delivery = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [pricing, setPricing] = useState<PricingRow[]>([]);
   const [deliveredToday, setDeliveredToday] = useState<Record<string, boolean>>({});
+  const [skippedToday, setSkippedToday] = useState<Record<string, boolean>>({});
   const [inStock, setInStock] = useState<Bottle[]>([]);
 
   // Dialog state
@@ -108,7 +109,7 @@ const Delivery = () => {
       setPricing(pricingRes.data || []);
       setInStock(inStockRes.data || []);
 
-      // After loading customers, check if delivered today per customer
+      // After loading customers, check if delivered or skipped today per customer
       if (custList.length > 0) {
         const todayStart = new Date();
         todayStart.setHours(0, 0, 0, 0);
@@ -117,7 +118,7 @@ const Delivery = () => {
 
         const { data: txs, error: txErr } = await supabase
           .from('transactions')
-          .select('customer_id, quantity, transaction_date, transaction_type')
+          .select('customer_id, quantity, transaction_date, transaction_type, notes')
           .eq('transaction_type', 'delivery')
           .eq('owner_user_id', user!.id)
           .gte('transaction_date', todayStart.toISOString())
@@ -125,15 +126,18 @@ const Delivery = () => {
           .in('customer_id', custList.map(c => c.id));
         if (txErr) throw txErr;
 
-        const map: Record<string, boolean> = {};
+        const deliveredMap: Record<string, boolean> = {};
+        const skippedMap: Record<string, boolean> = {};
         for (const t of txs || []) {
-          if ((t as any).quantity && (t as any).quantity > 0) {
-            map[(t as any).customer_id] = true;
-          }
+          const qty = (t as any).quantity || 0;
+          if (qty > 0) deliveredMap[(t as any).customer_id] = true;
+          if (qty === 0) skippedMap[(t as any).customer_id] = true;
         }
-        setDeliveredToday(map);
+        setDeliveredToday(deliveredMap);
+        setSkippedToday(skippedMap);
       } else {
         setDeliveredToday({});
+        setSkippedToday({});
       }
     } catch (error: any) {
       toast({ variant: 'destructive', title: 'Error', description: error.message });
@@ -448,6 +452,7 @@ const Delivery = () => {
       });
       if (error) throw error;
       toast({ title: 'Marked skipped', description: `${customer.name} marked as skipped for today` });
+      await fetchData();
     } catch (error: any) {
       toast({ variant: 'destructive', title: 'Error', description: error.message });
     }
@@ -516,6 +521,12 @@ const Delivery = () => {
                     </Button>
                     <Button size="sm" variant="outline" onClick={() => handleOpenDialog('extra', customer)}>
                       <PlusCircle className="h-4 w-4 mr-1" /> Extra
+                    </Button>
+                  </>
+                ) : skippedToday[customer.id] ? (
+                  <>
+                    <Button size="sm" variant="secondary" disabled>
+                      <X className="h-4 w-4 mr-1" /> Skipped Today
                     </Button>
                   </>
                 ) : (
