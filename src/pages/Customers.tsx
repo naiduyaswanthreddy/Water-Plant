@@ -421,7 +421,7 @@ const Customers = () => {
             placeholder="Search customers by name, PIN, or phone..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            className="pl-10"
+            className="pl-10 bg-white"
           />
         </div>
         <div className="text-sm text-muted-foreground md:text-right">

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { PageSkeleton } from '@/components/skeletons/PageSkeleton';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -57,6 +57,15 @@ const FunctionOrders = () => {
   const [overrideTotal, setOverrideTotal] = useState<string>('');
   const { toast } = useToast();
   const { user } = useAuth();
+
+  // Auto total for UI from currently selected bottles using function pricing
+  const autoTotal = useMemo(() => {
+    const selected = inStockBottles.filter((b) => selectedBottleIds.includes(b.id));
+    return selected.reduce((sum, b) => {
+      const pr = pricing.find(p => p.customer_type === 'function' && p.bottle_type === b.bottle_type);
+      return sum + (pr ? pr.price : 0);
+    }, 0);
+  }, [inStockBottles, selectedBottleIds, pricing]);
 
   useEffect(() => {
     if (!user) return;
@@ -802,7 +811,7 @@ const FunctionOrders = () => {
                     type="number"
                     min="0"
                     step="0.01"
-                    value={(overrideTotal !== '' ? overrideTotal : String(calcTotal))}
+                    value={(overrideTotal !== '' ? overrideTotal : String(autoTotal))}
                     onChange={(e) => setOverrideTotal(e.target.value)}
                     placeholder="Auto from bottles; editable"
                     className="bg-white"
@@ -839,7 +848,7 @@ const FunctionOrders = () => {
             placeholder="Search function orders..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            className="pl-10"
+            className="pl-10 bg-white"
           />
         </div>
         <Select value={filterStatus} onValueChange={setFilterStatus}>
