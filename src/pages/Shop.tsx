@@ -566,11 +566,11 @@ const Shop = () => {
         <Card className="md:col-span-2">
           <CardHeader className="pb-2"><CardTitle className="text-base">Record Sale</CardTitle><CardDescription></CardDescription></CardHeader>
           <CardContent className="space-y-3">
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
               <div>
                 <Label>Action</Label>
                 <SegmentedToggle
-                  size="sm"
+                  size="md"
                   value={actionMode}
                   onChange={(v) => {
                     if (mode === 'guest' && v === 'bottle_and_water') return; // disallow in guest mode
@@ -582,6 +582,7 @@ const Shop = () => {
                     { value: 'fill_only', label: 'Fill only' },
                     { value: 'bottle_and_water', label: 'Bottle + Water' },
                   ]}
+                  className="w-full"
                 />
                 {mode === 'guest' && (
                   <div className="text-xs text-muted-foreground mt-1">Bottle + Water requires selecting a customer.</div>
@@ -590,13 +591,14 @@ const Shop = () => {
               <div>
                 <Label>Bottle Type</Label>
                 <SegmentedToggle
-                  size="sm"
+                  size="md"
                   value={bottleType}
                   onChange={(v) => setBottleType(v as 'normal' | 'cool')}
                   options={[
                     { value: 'normal', label: 'Normal' },
                     { value: 'cool', label: 'Cool' },
                   ]}
+                  className="w-full"
                 />
               </div>
               <div>
