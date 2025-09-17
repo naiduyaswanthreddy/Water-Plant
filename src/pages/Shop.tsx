@@ -36,7 +36,7 @@ const Shop = () => {
   const [search, setSearch] = useState('');
   const [selectedCustomerId, setSelectedCustomerId] = useState<string>('');
   const [bottleType, setBottleType] = useState<'normal' | 'cool'>('normal');
-  const [quantity, setQuantity] = useState<number>(1);
+  const [quantity, setQuantity] = useState<number | ''>(1);
   const [pricing, setPricing] = useState<PricingRow[]>([]);
 
   const [inStock, setInStock] = useState<BottleRow[]>([]);
@@ -355,6 +355,11 @@ const Shop = () => {
         toast({ variant: 'destructive', title: 'Select customer', description: 'Please select a customer' });
         return;
       }
+      const qNum = typeof quantity === 'number' ? quantity : 0;
+      if (qNum < 1) {
+        toast({ variant: 'destructive', title: 'Quantity required', description: 'Please enter a valid quantity' });
+        return;
+      }
       // If there are returns checked, process them first
       if (mode === 'customer' && returnBottleIds.length > 0) {
         await markReturns(customerId);
@@ -366,12 +371,12 @@ const Shop = () => {
         toast({ variant: 'destructive', title: 'Pricing missing', description: `No pricing for ${ctype}/${bottleType}` });
         return;
       }
-      const calcAmount = overrideAmount !== undefined ? overrideAmount : price * quantity;
+      const calcAmount = overrideAmount !== undefined ? overrideAmount : price * qNum;
 
       const { data: txIns, error: txErr } = await supabase.from('transactions').insert({
         customer_id: customerId,
         transaction_type: 'delivery',
-        quantity,
+        quantity: qNum,
         bottle_type: bottleType,
         amount: calcAmount,
         transaction_date: new Date().toISOString(),
@@ -582,10 +587,13 @@ const Shop = () => {
                     { value: 'fill_only', label: 'Fill only' },
                     { value: 'bottle_and_water', label: 'Bottle + Water' },
                   ]}
-                  className="w-full"
+                  className="w-full sm:w-auto max-w-[280px]"
                 />
                 {mode === 'guest' && (
                   <div className="text-xs text-muted-foreground mt-1">Bottle + Water requires selecting a customer.</div>
+                )}
+                {mode === 'customer' && !selectedCustomerId && (
+                  <div className="text-xs text-amber-700 mt-1">Select a customer above to proceed.</div>
                 )}
               </div>
               <div>
@@ -598,12 +606,25 @@ const Shop = () => {
                     { value: 'normal', label: 'Normal' },
                     { value: 'cool', label: 'Cool' },
                   ]}
-                  className="w-full"
+                  className="w-full sm:w-auto max-w-[240px]"
                 />
               </div>
               <div>
                 <Label>Quantity</Label>
-                <Input type="number" min={1} value={quantity} onChange={(e) => setQuantity(Math.max(1, Number(e.target.value) || 1))} />
+                <Input
+                  type="number"
+                  min={1}
+                  value={quantity}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    if (v === '') {
+                      setQuantity('');
+                    } else {
+                      const num = Number(v);
+                      setQuantity(!Number.isFinite(num) || num < 1 ? 1 : num);
+                    }
+                  }}
+                />
               </div>
             </div>
 
@@ -622,13 +643,16 @@ const Shop = () => {
                   <Input
                     type="number"
                     min={0}
-                    value={amount === '' ? (() => { const ctype = mode === 'guest' ? 'shop' : (customers.find(c => c.id === selectedCustomerId)?.customer_type || 'shop'); const p = getUnitPrice(ctype as any, bottleType); return p !== undefined ? p * quantity : '' })() : amount}
+                    value={amount === '' ? (() => { const ctype = mode === 'guest' ? 'shop' : (customers.find(c => c.id === selectedCustomerId)?.customer_type || 'shop'); const p = getUnitPrice(ctype as any, bottleType); const qNum = typeof quantity === 'number' ? quantity : 0; return p !== undefined && qNum > 0 ? p * qNum : '' })() : amount}
                     onChange={(e) => setAmount(e.target.value === '' ? '' : Number(e.target.value))}
                     placeholder="Auto-calculated. You can override."
                   />
                 </div>
+                {mode === 'customer' && !selectedCustomerId && (
+                  <div className="text-xs text-amber-700">Select a customer above to proceed.</div>
+                )}
                 <div className="flex items-end">
-                  <Button onClick={() => handleFill(typeof amount === 'number' ? amount : undefined)} className="w-full"><ShoppingCart className="h-4 w-4 mr-2" /> Fill</Button>
+                  <Button onClick={() => handleFill(typeof amount === 'number' ? amount : undefined)} className="w-full" disabled={(mode === 'customer' && !selectedCustomerId) || !(typeof quantity === 'number' && quantity > 0)}><ShoppingCart className="h-4 w-4 mr-2" /> Fill</Button>
                 </div>
                 <div className="text-xs text-muted-foreground">
                   {(() => {
@@ -636,11 +660,13 @@ const Shop = () => {
                     const calc = (() => {
                       const ctype = mode === 'guest' ? 'shop' : (customers.find(c => c.id === selectedCustomerId)?.customer_type || 'shop');
                       const p = getUnitPrice(ctype as any, bottleType);
-                      return p !== undefined ? (typeof amount === 'number' ? amount : p * quantity) : undefined;
+                      const qNum = typeof quantity === 'number' ? quantity : 0;
+                      return p !== undefined ? (typeof amount === 'number' ? amount : (qNum > 0 ? p * qNum : undefined)) : undefined;
                     })();
                     const parts: string[] = [];
                     if (ret > 0) parts.push(`Returning ${ret} bottle${ret>1?'s':''}`);
-                    parts.push(`filling ${quantity} ${bottleType}`);
+                    const qNum = typeof quantity === 'number' ? quantity : 0;
+                    parts.push(`filling ${qNum} ${bottleType}`);
                     if (calc !== undefined) parts.push(`charging ₹${calc.toFixed(2)}`);
                     return parts.join(', ');
                   })()}
@@ -664,6 +690,9 @@ const Shop = () => {
                     )}
                   </div>
                 </div>
+                {!selectedCustomerId && (
+                  <div className="text-xs text-amber-700">Select a customer above to proceed.</div>
+                )}
                 <div className="text-sm text-muted-foreground">
                   {(() => {
                     const customer = customers.find(c => c.id === selectedCustomerId);
@@ -677,7 +706,7 @@ const Shop = () => {
                   <Input
                     type="number"
                     min={0}
-                    value={amount === '' ? '' : amount}
+                    value={amount === '' ? (() => { const customer = customers.find(c => c.id === selectedCustomerId); const unit = customer ? getUnitPrice(customer.customer_type, bottleType) : undefined; return unit !== undefined ? unit * selectedBottleIds.length : '' })() : amount}
                     onChange={(e) => setAmount(e.target.value === '' ? '' : Number(e.target.value))}
                     placeholder="Auto-calculated. You can override."
                   />

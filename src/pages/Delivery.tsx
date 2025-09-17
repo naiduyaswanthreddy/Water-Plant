@@ -48,7 +48,7 @@ const Delivery = () => {
   // Dialog state
   const [activeCustomer, setActiveCustomer] = useState<Customer | null>(null);
   const [dialogType, setDialogType] = useState<'given' | 'extra' | null>(null);
-  const [quantity, setQuantity] = useState<number>(1);
+  const [quantity, setQuantity] = useState<number | ''>(1);
   const [bottleType, setBottleType] = useState<'normal' | 'cool'>('normal');
   const [date, setDate] = useState<string>(() => new Date().toISOString().slice(0, 16));
   const [mode, setMode] = useState<'handover' | 'fill_only'>('handover');
@@ -428,6 +428,11 @@ const Delivery = () => {
   const handleGivenConfirm = async () => {
     if (!activeCustomer || !dialogType) return;
     try {
+      const qNum = typeof quantity === 'number' ? quantity : 0;
+      if (qNum < 1) {
+        toast({ variant: 'destructive', title: 'Quantity required', description: 'Please enter a valid quantity' });
+        return;
+      }
       // First, process any returns marked from previously held bottles
       if (returnBottleIds.length > 0) {
         await markReturns(activeCustomer, returnBottleIds, date);
@@ -436,22 +441,22 @@ const Delivery = () => {
       if (mode === 'handover') {
         const filtered = inStock.filter(b => b.bottle_type === bottleType);
         let selected = selectedBottleIds.filter(id => filtered.some(b => b.id === id));
-        if (selected.length < quantity && filtered.length >= quantity) {
+        if (selected.length < qNum && filtered.length >= qNum) {
           // Auto-pick the first N available bottles to meet the requested quantity
-          selected = filtered.slice(0, quantity).map(b => b.id);
+          selected = filtered.slice(0, qNum).map(b => b.id);
         }
-        if (selected.length !== quantity) {
-          toast({ variant: 'destructive', title: 'Select bottles', description: `Please select ${quantity} ${bottleType} bottle(s) to hand over.` });
+        if (selected.length !== qNum) {
+          toast({ variant: 'destructive', title: 'Select bottles', description: `Please select ${qNum} ${bottleType} bottle(s) to hand over.` });
           return;
         }
         const result = await assignBottlesDelivery(activeCustomer, selected, bottleType, date, undefined, effAmount);
         setLastAction({ used: false, kind: 'handover', customerId: activeCustomer.id, transactionId: result.transactionId, bottleIds: selected, amount: result.amount });
       } else {
-        const result = await upsertDelivery(activeCustomer, quantity, bottleType, date, 'Fill only (no bottle handover)', effAmount);
+        const result = await upsertDelivery(activeCustomer, qNum, bottleType, date, 'Fill only (no bottle handover)', effAmount);
         if (!result) return; // pricing missing, already toasted
         setLastAction({ used: false, kind: 'fill_only', customerId: activeCustomer.id, transactionId: result.transactionId, amount: result.amount });
       }
-      toast({ title: 'Recorded', description: `Given ${quantity} ${bottleType} bottle(s) to ${activeCustomer.name}` });
+      toast({ title: 'Recorded', description: `Given ${qNum} ${bottleType} bottle(s) to ${activeCustomer.name}` });
       await fetchData();
       resetDialog();
     } catch (error: any) {
@@ -494,6 +499,11 @@ const Delivery = () => {
   const handleExtraConfirm = async () => {
     if (!activeCustomer || !dialogType) return;
     try {
+      const qNum = typeof quantity === 'number' ? quantity : 0;
+      if (qNum < 1) {
+        toast({ variant: 'destructive', title: 'Quantity required', description: 'Please enter a valid quantity' });
+        return;
+      }
       // Process any returns marked from previously held bottles
       if (returnBottleIds.length > 0) {
         await markReturns(activeCustomer, returnBottleIds, date);
@@ -503,23 +513,23 @@ const Delivery = () => {
         // Validate selection count and assign bottles as extra
         const filtered = inStock.filter(b => b.bottle_type === bottleType);
         let selected = selectedBottleIds.filter(id => filtered.some(b => b.id === id));
-        if (selected.length < quantity && filtered.length >= quantity) {
+        if (selected.length < qNum && filtered.length >= qNum) {
           // Auto-pick the first N available bottles to meet the requested quantity
-          selected = filtered.slice(0, quantity).map(b => b.id);
+          selected = filtered.slice(0, qNum).map(b => b.id);
         }
-        if (selected.length !== quantity) {
-          toast({ variant: 'destructive', title: 'Select bottles', description: `Please select ${quantity} ${bottleType} bottle(s) to hand over.` });
+        if (selected.length !== qNum) {
+          toast({ variant: 'destructive', title: 'Select bottles', description: `Please select ${qNum} ${bottleType} bottle(s) to hand over.` });
           return;
         }
         const result = await assignBottlesDelivery(activeCustomer, selected, bottleType, date, 'Extra', effAmount);
         setLastAction({ used: false, kind: 'extra_handover', customerId: activeCustomer.id, transactionId: result.transactionId, bottleIds: selected, amount: result.amount });
       } else {
         // Fill only extra delivery (no bottle handover)
-        const result = await upsertDelivery(activeCustomer, quantity, bottleType, date, 'Extra (fill only)', effAmount);
+        const result = await upsertDelivery(activeCustomer, qNum, bottleType, date, 'Extra (fill only)', effAmount);
         if (!result) return; // pricing missing, already toasted
         setLastAction({ used: false, kind: 'extra_fill', customerId: activeCustomer.id, transactionId: result.transactionId, amount: result.amount });
       }
-      toast({ title: 'Recorded', description: `Extra ${quantity} ${bottleType} bottle(s) for ${activeCustomer.name}` });
+      toast({ title: 'Recorded', description: `Extra ${qNum} ${bottleType} bottle(s) for ${activeCustomer.name}` });
       await fetchData();
       resetDialog();
     } catch (error: any) {
@@ -688,7 +698,15 @@ const Delivery = () => {
                   type="number"
                   min={1}
                   value={quantity}
-                  onChange={(e) => setQuantity(Math.max(1, Number(e.target.value) || 1))}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    if (v === '') {
+                      setQuantity('');
+                    } else {
+                      const num = Number(v);
+                      setQuantity(!Number.isFinite(num) || num < 1 ? 1 : num);
+                    }
+                  }}
                   className="bg-white"
                 />
               </div>
@@ -782,7 +800,7 @@ const Delivery = () => {
                     <div className="col-span-2 text-xs text-muted-foreground">No in-stock {bottleType} bottles available.</div>
                   )}
                 </div>
-                <div className="text-xs text-muted-foreground mt-1">Select exactly {quantity} bottle(s).</div>
+                <div className="text-xs text-muted-foreground mt-1">Select exactly {typeof quantity === 'number' ? quantity : 0} bottle(s).</div>
               </div>
             )}
 
@@ -794,7 +812,7 @@ const Delivery = () => {
                   id="amount"
                   type="number"
                   min={0}
-                  value={amount === '' ? (() => { const unit = householdPrices[bottleType] || 0; return unit * quantity; })() : amount}
+                  value={amount === '' ? (() => { const unit = householdPrices[bottleType]; const qNum = typeof quantity === 'number' ? quantity : 0; return unit !== undefined && qNum > 0 ? unit * qNum : '' })() : amount}
                   onChange={(e) => setAmount(e.target.value === '' ? '' : Number(e.target.value))}
                   className="bg-white"
                 />
@@ -814,7 +832,12 @@ const Delivery = () => {
 
             <div className="text-sm text-muted-foreground">
               {householdPrices[bottleType] !== undefined ? (
-                <>Price per bottle: ₹{householdPrices[bottleType]?.toFixed(2)} • Total: ₹{((householdPrices[bottleType] || 0) * quantity).toFixed(2)}</>
+                (() => {
+                  const unit = householdPrices[bottleType]!;
+                  const qNum = typeof quantity === 'number' ? quantity : 0;
+                  const total = qNum > 0 ? (unit * qNum).toFixed(2) : '--';
+                  return <>Price per bottle: ₹{unit.toFixed(2)} • Total: ₹{total}</>;
+                })()
               ) : (
                 <>No pricing set for {bottleType} (household). Set it in Pricing page.</>
               )}
@@ -822,7 +845,7 @@ const Delivery = () => {
 
             <div className="grid grid-cols-2 gap-3 pt-2">
               <Button variant="secondary" onClick={resetDialog}>Cancel</Button>
-              <Button onClick={dialogType === 'extra' ? handleExtraConfirm : handleGivenConfirm}>Save</Button>
+              <Button onClick={dialogType === 'extra' ? handleExtraConfirm : handleGivenConfirm} disabled={!(typeof quantity === 'number' && quantity > 0)}>Save</Button>
             </div>
           </div>
         </DialogContent>
