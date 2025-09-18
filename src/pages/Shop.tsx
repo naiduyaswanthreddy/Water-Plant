@@ -322,26 +322,21 @@ const Shop = () => {
   const ensureGuestCustomer = async (): Promise<string> => {
     // Use a dedicated Guest customer with a 4-char pin to satisfy DB constraint
     const GUEST_PIN = 'G001';
-    const { data: found } = await supabase
-      .from('customers')
-      .select('id')
-      .eq('pin', GUEST_PIN)
-      .eq('owner_user_id', user!.id)
-      .single();
-    if (found?.id) return found.id;
-
-    // Create one if missing
+    // Upsert to avoid race conditions and duplicate key errors
     const { data, error } = await supabase
       .from('customers')
-      .insert({
-        name: 'Guest',
-        pin: GUEST_PIN,
-        customer_type: 'shop',
-        delivery_type: 'daily',
-        balance: 0,
-        deposit_amount: 0,
-        owner_user_id: user!.id,
-      })
+      .upsert(
+        {
+          name: 'Guest',
+          pin: GUEST_PIN,
+          customer_type: 'shop',
+          delivery_type: 'daily',
+          balance: 0,
+          deposit_amount: 0,
+          owner_user_id: user!.id,
+        },
+        { onConflict: 'owner_user_id,pin' }
+      )
       .select('id')
       .single();
     if (error) throw error;
