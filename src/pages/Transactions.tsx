@@ -80,7 +80,10 @@ const Transactions = () => {
     };
     const channel = supabase
       .channel('realtime-transactions-page')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'transactions' }, (payload: any) => {
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'transactions', filter: `owner_user_id=eq.${user.id}` },
+        (payload: any) => {
         const tx = payload.new as any;
         if (!tx || tx.owner_user_id === user.id) {
           // Fine-grained local update to the visible list
@@ -103,15 +106,24 @@ const Transactions = () => {
           schedule(() => fetchData());
         }
       })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'customers' }, (payload: any) => {
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'customers', filter: `owner_user_id=eq.${user.id}` },
+        (payload: any) => {
         const row = (payload.new || payload.old) as any;
         if (!row || row.owner_user_id === user.id) schedule(() => fetchData());
       })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'bottles' }, (payload: any) => {
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'bottles', filter: `owner_user_id=eq.${user.id}` },
+        (payload: any) => {
         const row = (payload.new || payload.old) as any;
         if (!row || row.owner_user_id === user.id) schedule(() => fetchData());
       })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'pricing' }, (payload: any) => {
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'pricing', filter: `owner_user_id=eq.${user.id}` },
+        (payload: any) => {
         const row = (payload.new || payload.old) as any;
         if (!row || row.owner_user_id === user.id) schedule(() => fetchData());
       })

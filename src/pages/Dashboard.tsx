@@ -50,9 +50,9 @@ const Dashboard = () => {
     };
     const channel = supabase
       .channel('realtime-dashboard')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'customers' }, () => schedule(() => fetchDashboardStats()))
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'bottles' }, () => schedule(() => fetchDashboardStats()))
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'transactions' }, () => schedule(() => fetchDashboardStats()))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'customers', filter: `owner_user_id=eq.${user.id}` }, () => schedule(() => fetchDashboardStats()))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'bottles', filter: `owner_user_id=eq.${user.id}` }, () => schedule(() => fetchDashboardStats()))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'transactions', filter: `owner_user_id=eq.${user.id}` }, () => schedule(() => fetchDashboardStats()))
       .subscribe();
 
     return () => {

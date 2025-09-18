@@ -54,7 +54,7 @@ const Reports = () => {
         .lte('transaction_date', endISO)
         .order('transaction_date', { ascending: false });
       if (type !== 'all') q = q.eq('transaction_type', type);
-      const { data, error } = await q;
+      const { data, error }: any = await q;
       if (error) throw error;
       setTxs((data || []) as Transaction[]);
     } catch (error: any) {
@@ -76,11 +76,15 @@ const Reports = () => {
     };
     const ch = supabase
       .channel('realtime-reports')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'transactions' }, (payload: any) => {
-        const row: any = payload.new || payload.old;
-        // Only refresh for current user
-        if (row && row.owner_user_id === user.id) schedule();
-      })
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'transactions', filter: `owner_user_id=eq.${user.id}` },
+        (payload: any) => {
+          const row: any = payload.new || payload.old;
+          // Only refresh for current user
+          if (row && row.owner_user_id === user.id) schedule();
+        }
+      )
       .subscribe();
     return () => {
       if (timeout) window.clearTimeout(timeout);

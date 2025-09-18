@@ -2,10 +2,13 @@ import { useEffect, useMemo, useState } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 
 const LS_KEYS = {
-  // Kept only for backward compatibility and session state
+  // Legacy hash key (will be ignored and cleared to avoid cross-account migration)
   PIN_HASH: 'app.pin.hash',
-  PIN_UNLOCKED_AT: 'app.pin.unlocked_at',
+  // Session unlocked flag will be namespaced per user id: `${PIN_UNLOCKED_AT_PREFIX}${uid}`
+  PIN_UNLOCKED_AT_PREFIX: 'app.pin.unlocked_at:',
 };
+
+const unlockedKeyFor = (uid: string) => `${LS_KEYS.PIN_UNLOCKED_AT_PREFIX}${uid}`;
 
 async function sha256(input: string): Promise<string> {
   const enc = new TextEncoder();
@@ -27,15 +30,16 @@ export function usePin() {
         const { data: userRes } = await supabase.auth.getUser();
         const uid = userRes.user?.id || null;
 
-        const unlockedAt = localStorage.getItem(LS_KEYS.PIN_UNLOCKED_AT);
-        setUnlocked(Boolean(unlockedAt));
-
         if (!uid) {
           // Not logged in; treat as no PIN available
           setPinHash(null);
           setLoading(false);
           return;
         }
+
+        // Session unlock is per-user
+        const unlockedAt = localStorage.getItem(unlockedKeyFor(uid));
+        setUnlocked(Boolean(unlockedAt));
 
         const { data, error } = await (supabase as any)
           .from('app_pins')
@@ -52,28 +56,27 @@ export function usePin() {
         if ((data as any)?.pin_hash) {
           setPinHash((data as any).pin_hash as string);
         } else {
-          // Backward compatibility: migrate any existing local hash to DB
-          const legacyHash = localStorage.getItem(LS_KEYS.PIN_HASH);
-          if (legacyHash) {
-            const { error: upErr } = await (supabase as any)
-              .from('app_pins')
-              .upsert({ owner_user_id: uid, pin_hash: legacyHash }, { onConflict: 'owner_user_id' });
-            if (!upErr) {
-              setPinHash(legacyHash);
-              localStorage.removeItem(LS_KEYS.PIN_HASH);
-            } else {
-              console.error('Failed to migrate local PIN hash to DB:', upErr);
-              setPinHash(null);
-            }
-          } else {
-            setPinHash(null);
-          }
+          setPinHash(null);
         }
       } finally {
         setLoading(false);
       }
     };
     init();
+    // Also subscribe to auth state changes to clear session unlock on user switch
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
+      const uid = session?.user?.id;
+      if (!uid) {
+        setUnlocked(false);
+        setPinHash(null);
+      } else {
+        const key = unlockedKeyFor(uid);
+        setUnlocked(Boolean(localStorage.getItem(key)));
+      }
+    });
+    return () => {
+      sub.subscription?.unsubscribe();
+    };
   }, []);
 
   const hasPin = useMemo(() => Boolean(pinHash), [pinHash]);
@@ -89,7 +92,7 @@ export function usePin() {
       .upsert({ owner_user_id: uid, pin_hash: hash }, { onConflict: 'owner_user_id' });
     if (error) throw error;
 
-    // Ensure any legacy local storage hash is cleared
+    // Clear any legacy local storage hash to avoid cross-account leakage
     localStorage.removeItem(LS_KEYS.PIN_HASH);
     setPinHash(hash);
   };
@@ -105,6 +108,7 @@ export function usePin() {
     }
     await (supabase as any).from('app_pins').delete().eq('owner_user_id', uid);
     localStorage.removeItem(LS_KEYS.PIN_HASH);
+    localStorage.removeItem(unlockedKeyFor(uid));
     setPinHash(null);
   };
 
@@ -113,20 +117,32 @@ export function usePin() {
     const hash = await sha256(pin);
     const ok = hash === pinHash;
     if (ok) {
-      localStorage.setItem(LS_KEYS.PIN_UNLOCKED_AT, new Date().toISOString());
-      setUnlocked(true);
+      const { data: userRes } = await supabase.auth.getUser();
+      const uid = userRes.user?.id;
+      if (uid) {
+        localStorage.setItem(unlockedKeyFor(uid), new Date().toISOString());
+        setUnlocked(true);
+      }
     }
     return ok;
   };
 
   const lock = () => {
-    localStorage.removeItem(LS_KEYS.PIN_UNLOCKED_AT);
-    setUnlocked(false);
+    // Lock current user session
+    supabase.auth.getUser().then(({ data }) => {
+      const uid = data.user?.id;
+      if (uid) localStorage.removeItem(unlockedKeyFor(uid));
+      setUnlocked(false);
+    });
   };
 
-  const unlockSession = () => {
-    localStorage.setItem(LS_KEYS.PIN_UNLOCKED_AT, new Date().toISOString());
-    setUnlocked(true);
+  const unlockSession = async () => {
+    const { data: userRes } = await supabase.auth.getUser();
+    const uid = userRes.user?.id;
+    if (uid) {
+      localStorage.setItem(unlockedKeyFor(uid), new Date().toISOString());
+      setUnlocked(true);
+    }
   };
 
   return {

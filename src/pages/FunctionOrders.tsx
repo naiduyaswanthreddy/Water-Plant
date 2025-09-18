@@ -84,7 +84,10 @@ const FunctionOrders = () => {
     };
     const channel = supabase
       .channel('realtime-function-orders-page')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'function_orders' }, (payload: any) => {
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'function_orders', filter: `owner_user_id=eq.${user.id}` },
+        (payload: any) => {
         // Fine-grained local updates for orders list
         setOrders((prev) => {
           const list = [...prev];
@@ -104,25 +107,40 @@ const FunctionOrders = () => {
         // Debounced safety fetch to sync related data and sorts
         schedule(() => fetchData());
       })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'function_order_bottles' }, (payload: any) => {
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'function_order_bottles', filter: `owner_user_id=eq.${user.id}` },
+        (payload: any) => {
         // If currently editing an order, refresh its withCustomer list when mapping changes
         if (editingOrder) {
           schedule(() => fetchWithCustomerForOrder(editingOrder));
         }
       })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'bottles' }, () => {
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'bottles', filter: `owner_user_id=eq.${user.id}` },
+        () => {
         schedule(() => fetchData());
         if (editingOrder && activeTab === 'receiving') {
           schedule(() => fetchWithCustomerForOrder(editingOrder));
         }
       })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'customers' }, () => {
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'customers', filter: `owner_user_id=eq.${user.id}` },
+        () => {
         schedule(() => fetchData());
       })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'pricing' }, () => {
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'pricing', filter: `owner_user_id=eq.${user.id}` },
+        () => {
         schedule(() => fetchData());
       })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'transactions' }, () => {
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'transactions', filter: `owner_user_id=eq.${user.id}` },
+        () => {
         // Transactions affect balances and inferred mapping; keep in sync
         if (editingOrder) schedule(() => fetchWithCustomerForOrder(editingOrder));
       })

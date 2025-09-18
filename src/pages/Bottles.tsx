@@ -101,7 +101,10 @@ const Bottles = () => {
     // Subscribe to new/updated transactions to refresh recent activity in realtime
     const txChannel = supabase
       .channel('realtime-transactions')
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'transactions' }, (payload: any) => {
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'transactions', filter: `owner_user_id=eq.${user?.id}` },
+        (payload: any) => {
         const tx = payload.new as Transaction;
         const nums = tx?.bottle_numbers || [];
         if (!Array.isArray(nums) || nums.length === 0) return;
@@ -124,7 +127,10 @@ const Bottles = () => {
           return next;
         });
       })
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'transactions' }, (payload: any) => {
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'transactions', filter: `owner_user_id=eq.${user?.id}` },
+        (payload: any) => {
         const tx = payload.new as Transaction;
         const nums = tx?.bottle_numbers || [];
         if (!Array.isArray(nums) || nums.length === 0) return;
@@ -146,9 +152,13 @@ const Bottles = () => {
     // Subscribe to bottles changes to keep list in sync (assign/return/delete)
     const bottlesChannel = supabase
       .channel('realtime-bottles')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'bottles' }, () => {
-        fetchBottles();
-      })
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'bottles', filter: `owner_user_id=eq.${user?.id}` },
+        () => {
+          fetchBottles();
+        }
+      )
       .subscribe();
 
     return () => {
@@ -266,7 +276,7 @@ const Bottles = () => {
       if (i > 100000) break;
     }
     const ok = result.length === count;
-    return { ok: ok as const, numbers: result, available: result.length };
+    return { ok, numbers: result, available: result.length };
   };
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
@@ -450,7 +460,7 @@ const Bottles = () => {
       const note = notesDraft[bottleId] || null;
       const { error } = await supabase
         .from('bottles')
-        .update({ notes: note })
+        .update({ notes: note } as any)
         .eq('id', bottleId);
       if (error) throw error;
       toast({ title: 'Saved', description: 'Notes updated for bottle' });

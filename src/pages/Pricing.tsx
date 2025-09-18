@@ -42,7 +42,10 @@ const Pricing = () => {
     if (!user) return;
     const channel = supabase
       .channel('realtime-pricing-page')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'pricing' }, (payload: any) => {
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'pricing', filter: `owner_user_id=eq.${user.id}` },
+        (payload: any) => {
         const row = (payload.new || payload.old) as any;
         if (!row || row.owner_user_id === user.id) {
           // Fine-grained local update

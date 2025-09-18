@@ -71,7 +71,7 @@ const Customers = () => {
       .channel('realtime-customers-page')
       .on(
         'postgres_changes',
-        { event: '*', schema: 'public', table: 'customers' },
+        { event: '*', schema: 'public', table: 'customers', filter: `owner_user_id=eq.${user.id}` },
         (payload: any) => {
           const row = (payload.new || payload.old) as any;
           if (row && row.owner_user_id && row.owner_user_id !== user.id) return;
@@ -102,7 +102,7 @@ const Customers = () => {
       )
       .on(
         'postgres_changes',
-        { event: '*', schema: 'public', table: 'transactions' },
+        { event: '*', schema: 'public', table: 'transactions', filter: `owner_user_id=eq.${user.id}` },
         (payload: any) => {
           const tx = payload.new as any;
           if (tx && tx.owner_user_id === user.id) {
@@ -307,28 +307,51 @@ const Customers = () => {
   };
 
   const handleDelete = async (customerId: string) => {
-    if (!confirm('Are you sure you want to delete this customer?')) return;
-    
     try {
+      // 1) Count transactions for this customer (per owner)
+      const { count: txCount, error: txErr } = await supabase
+        .from('transactions')
+        .select('*', { count: 'exact', head: true })
+        .eq('customer_id', customerId)
+        .eq('owner_user_id', user!.id);
+      if (txErr) throw txErr;
+
+      if ((txCount || 0) > 0) {
+        toast({
+          variant: 'destructive',
+          title: 'Cannot delete customer',
+          description: 'This customer has transactions and cannot be deleted. Delete is only allowed when there are 0 transactions.'
+        });
+        return;
+      }
+
+      // 2) Count bottles currently assigned to this customer (these will be detached)
+      const { count: bottleCount, error: bottleErr } = await supabase
+        .from('bottles')
+        .select('*', { count: 'exact', head: true })
+        .eq('current_customer_id', customerId)
+        .eq('owner_user_id', user!.id)
+        .eq('is_returned', false);
+      if (bottleErr) throw bottleErr;
+
+      const warn = (bottleCount || 0) > 0
+        ? `They currently have ${bottleCount} bottle${(bottleCount||0) > 1 ? 's' : ''} assigned. These will be unassigned.`
+        : 'They have no bottles assigned.';
+
+      const ok = confirm(`Delete this customer permanently?\n${warn}`);
+      if (!ok) return;
+
+      // 3) Proceed with delete (DB will detach bottles due to ON DELETE SET NULL)
       const { error } = await supabase
         .from('customers')
         .delete()
         .eq('id', customerId);
-      
       if (error) throw error;
-      
-      toast({
-        title: "Success",
-        description: "Customer deleted successfully"
-      });
-      
+
+      toast({ title: 'Success', description: 'Customer deleted successfully' });
       fetchCustomers();
     } catch (error: any) {
-      toast({
-        variant: "destructive",
-        title: "Error",
-        description: error.message
-      });
+      toast({ variant: 'destructive', title: 'Error', description: error.message });
     }
   };
 

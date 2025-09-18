@@ -78,7 +78,10 @@ const Shop = () => {
     };
     const channel = supabase
       .channel('realtime-shop-page')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'bottles' }, async (payload: any) => {
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'bottles', filter: `owner_user_id=eq.${user.id}` },
+        async (payload: any) => {
         const row = (payload.new || payload.old) as any;
         if (!row || row.owner_user_id === user.id) {
           // Fine-grained inStock updates (only bottles with is_returned=true belong in inventory)
@@ -157,7 +160,7 @@ const Shop = () => {
               return list;
             });
             schedule(async () => {
-              const { data } = await supabase
+              const { data }: any = await supabase
                 .from('bottles')
                 .select('id, bottle_number, bottle_type, is_returned')
                 .eq('owner_user_id', user.id)
@@ -169,7 +172,10 @@ const Shop = () => {
           }
         }
       })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'customers' }, async (payload: any) => {
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'customers', filter: `owner_user_id=eq.${user.id}` },
+        async (payload: any) => {
         const row = (payload.new || payload.old) as any;
         if (!row || row.owner_user_id === user.id) {
           schedule(async () => {
@@ -177,7 +183,10 @@ const Shop = () => {
           });
         }
       })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'transactions' }, async (payload: any) => {
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'transactions', filter: `owner_user_id=eq.${user.id}` },
+        async (payload: any) => {
         const tx = payload.new as any;
         if (tx && tx.owner_user_id === user.id) {
           // Transactions can change balances and bottle assignments via triggers; refresh key lists
@@ -254,7 +263,7 @@ const Shop = () => {
       setReturnBottleIds([]);
       await fetchInStock();
       // Also refresh withCustomer list
-      const { data } = await supabase
+      const { data }: any = await supabase
         .from('bottles')
         .select('id, bottle_number, bottle_type, is_returned')
         .eq('owner_user_id', user!.id)
