@@ -111,4 +111,14 @@ All colors MUST be HSL.
   body {
     @apply bg-background text-foreground;
   }
+
+  /* Prevent iOS input zoom by ensuring form controls have >=16px font-size */
+  input, select, textarea, button {
+    font-size: 16px;
+  }
+}
+
+/* Utility: padding bottom to account for iOS home indicator safe-area */
+.pb-safe {
+  padding-bottom: env(safe-area-inset-bottom);
 }

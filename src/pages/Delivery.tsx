@@ -9,7 +9,7 @@ import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { Badge } from '@/components/ui/badge';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
-import { Search, Truck, Check, X, PlusCircle } from 'lucide-react';
+import { Search, Truck, Check, X, PlusCircle, Loader2 } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { withTimeoutRetry } from '@/lib/supaRequest';
 
@@ -18,7 +18,7 @@ interface Customer {
   pin: string;
   name: string;
   phone?: string;
-  customer_type: 'household' | 'shop' | 'function';
+  customer_type: 'household' | 'shop' | 'function' | 'hotel';
   balance: number | null;
 }
 
@@ -33,7 +33,7 @@ interface Bottle {
 interface PricingRow {
   id: string;
   bottle_type: 'normal' | 'cool';
-  customer_type: 'household' | 'shop' | 'function';
+  customer_type: 'household' | 'shop' | 'function' | 'hotel';
   price: number;
 }
 
@@ -73,6 +73,30 @@ const Delivery = () => {
 
   const { toast } = useToast();
   const { user } = useAuth();
+
+  // Recompute customer's balance from transactions for correctness
+  // Convention: balance = payments - deliveries (positive means credit)
+  const recomputeCustomerBalance = async (customerId: string) => {
+    const { data, error } = await supabase
+      .from('transactions')
+      .select('transaction_type, amount')
+      .eq('customer_id', customerId)
+      .eq('owner_user_id', user!.id);
+    if (error) throw error;
+    let deliveries = 0;
+    let payments = 0;
+    for (const t of data || []) {
+      const amt = (t as any).amount || 0;
+      if ((t as any).transaction_type === 'delivery') deliveries += amt;
+      if ((t as any).transaction_type === 'payment') payments += amt;
+    }
+    const balance = payments - deliveries;
+    const { error: updErr } = await supabase
+      .from('customers')
+      .update({ balance })
+      .eq('id', customerId);
+    if (updErr) throw updErr;
+  };
 
   useEffect(() => {
     if (!user) return;
@@ -869,8 +893,17 @@ const Delivery = () => {
             </div>
 
             <div className="grid grid-cols-2 gap-3 pt-2">
-              <Button variant="secondary" onClick={resetDialog}>Cancel</Button>
-              <Button onClick={dialogType === 'extra' ? handleExtraConfirm : handleGivenConfirm} disabled={!(typeof quantity === 'number' && quantity > 0)}>Save</Button>
+              <Button variant="secondary" onClick={resetDialog} disabled={dialogSaving}>Cancel</Button>
+              <Button onClick={dialogType === 'extra' ? handleExtraConfirm : handleGivenConfirm} disabled={(() => {
+                const baseInvalid = dialogSaving || !(typeof quantity === 'number' && quantity > 0);
+                const noStockForType = inStock.filter(b => b.bottle_type === bottleType).length === 0;
+                const blockHandoverNoStock = mode === 'handover' && noStockForType;
+                return baseInvalid || blockHandoverNoStock;
+              })()}>
+                {dialogSaving ? (
+                  <span className="inline-flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" /> Saving...</span>
+                ) : 'Save'}
+              </Button>
             </div>
           </div>
         </DialogContent>

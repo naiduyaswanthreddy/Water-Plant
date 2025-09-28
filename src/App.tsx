@@ -3,6 +3,7 @@ import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes as ReactRoutes, Route, Navigate } from "react-router-dom";
+import SwUpdater from "./components/SwUpdater";
 import { AuthProvider, useAuth } from "@/hooks/useAuth";
 import MainLayout from "@/components/Layout/MainLayout";
 import PinGate from "@/components/PinGate";
@@ -47,6 +48,7 @@ const App = () => (
       <AuthProvider>
         <Toaster />
         <Sonner />
+        <SwUpdater />
         <BrowserRouter>
           <ReactRoutes>
             <Route path="/auth" element={<Auth />} />
