@@ -178,4 +178,3 @@ Make sure all database migrations have been applied to your production Supabase 
 ## License
 
 Proprietary. All rights reserved.
-

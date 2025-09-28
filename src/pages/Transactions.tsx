@@ -10,7 +10,7 @@ import { Badge } from '@/components/ui/badge';
 import { Textarea } from '@/components/ui/textarea';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
-import { Plus, Search, Receipt, TrendingUp, TrendingDown, DollarSign } from 'lucide-react';
+import { Plus, Search, Receipt, TrendingUp, TrendingDown, DollarSign, Trash2 } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 
 interface Transaction {
@@ -78,6 +78,7 @@ const Transactions = () => {
       if (debounce) window.clearTimeout(debounce);
       debounce = window.setTimeout(fn, 250);
     };
+
     const channel = supabase
       .channel('realtime-transactions-page')
       .on(
@@ -206,6 +207,82 @@ const Transactions = () => {
     }
   };
 
+  // Recompute a customer's balance based on all their transactions
+  const recomputeCustomerBalance = async (customerId: string) => {
+    const { data, error } = await supabase
+      .from('transactions')
+      .select('transaction_type, amount')
+      .eq('customer_id', customerId)
+      .eq('owner_user_id', user!.id);
+    if (error) throw error;
+    let deliveries = 0;
+    let payments = 0;
+    for (const t of data || []) {
+      const amt = (t as any).amount || 0;
+      if ((t as any).transaction_type === 'delivery') deliveries += amt;
+      if ((t as any).transaction_type === 'payment') payments += amt;
+    }
+    const balance = deliveries - payments;
+    const { error: updErr } = await supabase
+      .from('customers')
+      .update({ balance })
+      .eq('id', customerId);
+    if (updErr) throw updErr;
+  };
+
+  // Check if a transaction can be deleted (within 24 hours of creation)
+  const canDeleteTransaction = (tx: Transaction): boolean => {
+    try {
+      const created = new Date(tx.created_at || tx.transaction_date);
+      const diff = Date.now() - created.getTime();
+      return diff < 24 * 60 * 60 * 1000; // 24 hours
+    } catch {
+      return false;
+    }
+  };
+
+  // Delete a transaction and cascade updates to bottles and balances
+  const handleDeleteTransaction = async (tx: Transaction) => {
+    if (!user) return;
+    const ok = window.confirm('Are you sure you want to delete this transaction? This action cannot be undone.');
+    if (!ok) return;
+    try {
+      // If delivery with bottles, return them to inventory
+      if (tx.transaction_type === 'delivery' && tx.bottle_numbers && tx.bottle_numbers.length > 0) {
+        const { error: updErr } = await supabase
+          .from('bottles')
+          .update({ current_customer_id: null, is_returned: true })
+          .in('bottle_number', tx.bottle_numbers)
+          .eq('owner_user_id', user.id);
+        if (updErr) throw updErr;
+      }
+      // If return with bottles, put them back with the customer
+      if (tx.transaction_type === 'return' && tx.bottle_numbers && tx.bottle_numbers.length > 0) {
+        const { error: updErr2 } = await supabase
+          .from('bottles')
+          .update({ current_customer_id: tx.customer_id, is_returned: false })
+          .in('bottle_number', tx.bottle_numbers)
+          .eq('owner_user_id', user.id);
+        if (updErr2) throw updErr2;
+      }
+
+      const { error: delErr } = await supabase
+        .from('transactions')
+        .delete()
+        .eq('id', tx.id)
+        .eq('owner_user_id', user.id);
+      if (delErr) throw delErr;
+
+      // Recompute balance after delete to keep it accurate
+      await recomputeCustomerBalance(tx.customer_id);
+
+      toast({ title: 'Deleted', description: 'Transaction deleted successfully.' });
+      fetchData();
+    } catch (error: any) {
+      toast({ variant: 'destructive', title: 'Delete failed', description: error.message });
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     
@@ -302,14 +379,9 @@ const Transactions = () => {
         .insert(transactionData as any);
       
       if (error) throw error;
-      // Update balance rules
+      // Recompute balance from transactions to ensure correctness
       if (customer) {
-        if (transaction_type === 'delivery' || transaction_type === 'balance') {
-          await supabase.from('customers').update({ balance: (customer.balance || 0) + amount }).eq('id', customer.id);
-        } else if (transaction_type === 'payment') {
-          await supabase.from('customers').update({ balance: (customer.balance || 0) - amount }).eq('id', customer.id);
-        }
-        // return: no balance change
+        await recomputeCustomerBalance(customer.id);
       }
       
       toast({
@@ -661,6 +733,16 @@ const Transactions = () => {
                         <DollarSign className="h-4 w-4" />
                         ₹{transaction.amount.toFixed(2)}
                       </div>
+                    )}
+                    {canDeleteTransaction(transaction) && (
+                      <Button
+                        variant="destructive"
+                        size="sm"
+                        onClick={() => handleDeleteTransaction(transaction)}
+                        title="Delete this transaction (available for 24 hours)"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
                     )}
                   </div>
                 </div>

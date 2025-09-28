@@ -15,6 +15,7 @@ import {
   LogOut,
   MoreHorizontal
 } from 'lucide-react';
+import OfflineBanner from '@/components/OfflineBanner';
 
 const MainLayout = () => {
   const { signOut } = useAuth();
@@ -27,8 +28,8 @@ const MainLayout = () => {
     { name: 'Delivery', href: '/delivery', icon: Truck },
     // 3. Shop
     { name: 'Shop', href: '/shop', icon: ShoppingCart },
-    // 4. Function Orders
-    { name: 'Function Orders', href: '/function-orders', icon: Calendar },
+    // 4. Events
+    { name: 'Events', href: '/events', icon: Calendar },
     // Continue with the rest in original relative order
     { name: 'Customers', href: '/customers', icon: Users },
     { name: 'Bottles', href: '/bottles', icon: Package },
@@ -56,6 +57,7 @@ const MainLayout = () => {
 
   return (
     <div className="min-h-screen bg-background">
+      <OfflineBanner />
       {/* No hamburger on mobile; access pages via bottom More menu */}
       <div className="hidden" />
 

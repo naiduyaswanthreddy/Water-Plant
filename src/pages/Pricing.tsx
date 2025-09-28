@@ -8,13 +8,15 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Badge } from '@/components/ui/badge';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
-import { Plus, Search, Edit, Trash2, DollarSign } from 'lucide-react';
+import { Plus, Search, Edit, Trash2, DollarSign, Loader2 } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
+import { withTimeoutRetry } from '@/lib/supaRequest';
 
 interface Pricing {
   id: string;
   bottle_type: 'normal' | 'cool';
-  customer_type: 'household' | 'shop' | 'function';
+  customer_type: 'household' | 'shop' | 'function' | 'hotel';
+  pricing_for: 'filling' | 'bottle';
   price: number;
   created_at: string;
   updated_at: string;
@@ -30,6 +32,13 @@ const Pricing = () => {
   const [filterCustomerType, setFilterCustomerType] = useState<string>('all');
   const { toast } = useToast();
   const { user } = useAuth();
+  // Quick-setup inputs per missing combination: key = `${bottle_type}|${customer_type}`
+  const [quickPrice, setQuickPrice] = useState<Record<string, string>>({});
+  const [quickLoading, setQuickLoading] = useState<Record<string, boolean>>({});
+  const [quickRetry, setQuickRetry] = useState<Record<string, boolean>>({});
+  const [dialogLoading, setDialogLoading] = useState<boolean>(false);
+  const [dialogRetry, setDialogRetry] = useState<boolean>(false);
+  
 
   useEffect(() => {
     if (!user) return;
@@ -72,8 +81,58 @@ const Pricing = () => {
     return () => {
       supabase.removeChannel(channel);
     };
+
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]);
+
+  // Quick Setup data and action (component scope)
+  const allBottleTypes: Array<'normal' | 'cool'> = ['normal', 'cool'];
+  const allCustomerTypes: Array<'household' | 'shop' | 'function' | 'hotel'> = ['household', 'shop', 'function', 'hotel'];
+  const pricingFor: Array<'filling' | 'bottle'> = ['filling', 'bottle'];
+  const existing = new Set(pricings.map(p => `${p.bottle_type}|${p.customer_type}|${p.pricing_for}`));
+  const missingCombos = allBottleTypes.flatMap((bt) =>
+    allCustomerTypes.flatMap((ct) => pricingFor
+      .filter((pf) => !existing.has(`${bt}|${ct}|${pf}`))
+      .map((pf) => ({ bottle_type: bt, customer_type: ct, pricing_for: pf }))
+    )
+  );
+
+  const addQuickPrice = async (
+    bt: 'normal' | 'cool',
+    ct: 'household' | 'shop' | 'function' | 'hotel',
+    pf: 'filling' | 'bottle'
+  ) => {
+    const key = `${bt}|${ct}|${pf}`;
+    const raw = (quickPrice[key] ?? '').toString().trim();
+    const price = parseFloat(raw.replace(',', '.'));
+    if (!Number.isFinite(price) || price <= 0) {
+      toast({ variant: 'destructive', title: 'Invalid price', description: 'Enter a positive number, e.g. 20 or 20.5' });
+      return;
+    }
+    try {
+      setQuickLoading((prev) => ({ ...prev, [key]: true }));
+      setQuickRetry((prev) => ({ ...prev, [key]: false }));
+      const resp = await withTimeoutRetry(
+        () => supabase
+          .from('pricing')
+          .insert({ bottle_type: bt, customer_type: ct, pricing_for: pf, price, owner_user_id: user!.id } as any)
+          .select('id'),
+        { timeoutMs: 10000 }
+      );
+      const { error } = resp as any;
+      if (error) throw error;
+      setQuickPrice((prev) => ({ ...prev, [key]: '' }));
+      toast({ title: 'Added', description: `Pricing set for ${ct} / ${bt} (${pf})` });
+      fetchPricings();
+    } catch (e: any) {
+      toast({ variant: 'destructive', title: 'Error', description: e.message });
+      if ((e?.message || '').toLowerCase().includes('timeout')) {
+        setQuickRetry((prev) => ({ ...prev, [key]: true }));
+      }
+    } finally {
+      setQuickLoading((prev) => ({ ...prev, [key]: false }));
+    }
+  };
 
   const fetchPricings = async () => {
     try {
@@ -82,25 +141,41 @@ const Pricing = () => {
         .select('*')
         .eq('owner_user_id', user!.id)
         .order('bottle_type')
-        .order('customer_type');
+        .order('customer_type')
+        .order('pricing_for');
 
       if (error) throw error;
-      const rows = data || [];
+      const rows = (data as any) || [];
       // Auto-seed defaults if none exist for this user
       if (rows.length === 0) {
+        // Seed both pricing_for types and include hotel
         const defaults = [
-          { bottle_type: 'normal', customer_type: 'household', price: 20 },
-          { bottle_type: 'cool',   customer_type: 'household', price: 25 },
-          { bottle_type: 'normal', customer_type: 'shop',      price: 18 },
-          { bottle_type: 'cool',   customer_type: 'shop',      price: 23 },
-          { bottle_type: 'normal', customer_type: 'function',  price: 15 },
-          { bottle_type: 'cool',   customer_type: 'function',  price: 20 },
+          // household
+          { bottle_type: 'normal', customer_type: 'household', pricing_for: 'filling', price: 20 },
+          { bottle_type: 'normal', customer_type: 'household', pricing_for: 'bottle',  price: 20 },
+          { bottle_type: 'cool',   customer_type: 'household', pricing_for: 'filling', price: 25 },
+          { bottle_type: 'cool',   customer_type: 'household', pricing_for: 'bottle',  price: 25 },
+          // shop
+          { bottle_type: 'normal', customer_type: 'shop',      pricing_for: 'filling', price: 18 },
+          { bottle_type: 'normal', customer_type: 'shop',      pricing_for: 'bottle',  price: 18 },
+          { bottle_type: 'cool',   customer_type: 'shop',      pricing_for: 'filling', price: 23 },
+          { bottle_type: 'cool',   customer_type: 'shop',      pricing_for: 'bottle',  price: 23 },
+          // function
+          { bottle_type: 'normal', customer_type: 'function',  pricing_for: 'filling', price: 15 },
+          { bottle_type: 'normal', customer_type: 'function',  pricing_for: 'bottle',  price: 15 },
+          { bottle_type: 'cool',   customer_type: 'function',  pricing_for: 'filling', price: 20 },
+          { bottle_type: 'cool',   customer_type: 'function',  pricing_for: 'bottle',  price: 20 },
+          // hotel (example defaults)
+          { bottle_type: 'normal', customer_type: 'hotel',     pricing_for: 'filling', price: 22 },
+          { bottle_type: 'normal', customer_type: 'hotel',     pricing_for: 'bottle',  price: 22 },
+          { bottle_type: 'cool',   customer_type: 'hotel',     pricing_for: 'filling', price: 27 },
+          { bottle_type: 'cool',   customer_type: 'hotel',     pricing_for: 'bottle',  price: 27 },
         ] as const;
         const { error: seedErr } = await supabase
           .from('pricing')
           .upsert(
             defaults.map((d) => ({ ...d, owner_user_id: user!.id })) as any,
-            { onConflict: 'owner_user_id,bottle_type,customer_type', ignoreDuplicates: true }
+            { onConflict: 'owner_user_id,bottle_type,customer_type,pricing_for', ignoreDuplicates: true }
           );
         if (seedErr) throw seedErr;
         // Re-fetch after seeding
@@ -111,9 +186,9 @@ const Pricing = () => {
           .order('bottle_type')
           .order('customer_type');
         if (seeded.error) throw seeded.error;
-        setPricings(seeded.data || []);
+        setPricings(((seeded.data as any) || []) as Pricing[]);
       } else {
-        setPricings(rows);
+        setPricings(rows as Pricing[]);
       }
     } catch (error: any) {
       toast({
@@ -132,17 +207,24 @@ const Pricing = () => {
     const formData = new FormData(e.currentTarget);
     const pricingData = {
       bottle_type: formData.get('bottle_type') as 'normal' | 'cool',
-      customer_type: formData.get('customer_type') as 'household' | 'shop' | 'function',
-      price: parseFloat(formData.get('price') as string)
+      customer_type: formData.get('customer_type') as 'household' | 'shop' | 'function' | 'hotel',
+      pricing_for: formData.get('pricing_for') as 'filling' | 'bottle',
+      price: parseFloat((formData.get('price') as string || '').toString().trim().replace(',', '.'))
     };
 
     try {
+      setDialogLoading(true);
+      setDialogRetry(false);
       if (editingPricing) {
-        const { error } = await supabase
-          .from('pricing')
-          .update(pricingData)
-          .eq('id', editingPricing.id);
-        
+        const resp = await withTimeoutRetry(
+          () => supabase
+            .from('pricing')
+            .update(pricingData as any)
+            .eq('id', editingPricing.id)
+            .select('id'),
+          { timeoutMs: 10000 }
+        );
+        const { error } = resp as any;
         if (error) throw error;
         
         toast({
@@ -151,12 +233,17 @@ const Pricing = () => {
         });
       } else {
         // Check if combination already exists
-        const { data: existing } = await supabase
-          .from('pricing')
-          .select('id')
-          .eq('bottle_type', pricingData.bottle_type)
-          .eq('customer_type', pricingData.customer_type)
-          .eq('owner_user_id', user!.id);
+        const existingResp = await withTimeoutRetry(
+          () => supabase
+            .from('pricing')
+            .select('id')
+            .eq('bottle_type', pricingData.bottle_type as any)
+            .eq('customer_type', pricingData.customer_type as any)
+            .eq('pricing_for', pricingData.pricing_for as any)
+            .eq('owner_user_id', user!.id),
+          { timeoutMs: 10000 }
+        );
+        const existing = (existingResp as any).data as any[] | null;
         
         if (existing && existing.length > 0) {
           toast({
@@ -167,10 +254,14 @@ const Pricing = () => {
           return;
         }
         
-        const { error } = await supabase
-          .from('pricing')
-          .insert({ ...pricingData, owner_user_id: user!.id });
-        
+        const insResp = await withTimeoutRetry(
+          () => supabase
+            .from('pricing')
+            .insert({ ...pricingData, owner_user_id: user!.id } as any)
+            .select('id'),
+          { timeoutMs: 10000 }
+        );
+        const { error } = insResp as any;
         if (error) throw error;
         
         toast({
@@ -188,6 +279,11 @@ const Pricing = () => {
         title: "Error",
         description: error.message
       });
+      if ((error?.message || '').toLowerCase().includes('timeout')) {
+        setDialogRetry(true);
+      }
+    } finally {
+      setDialogLoading(false);
     }
   };
 
@@ -235,6 +331,7 @@ const Pricing = () => {
       case 'household': return 'bg-green-100 text-green-800';
       case 'shop': return 'bg-orange-100 text-orange-800';
       case 'function': return 'bg-pink-100 text-pink-800';
+      case 'hotel': return 'bg-yellow-100 text-yellow-800';
       default: return 'bg-gray-100 text-gray-800';
     }
   };
@@ -267,73 +364,137 @@ const Pricing = () => {
         <div>
           <h1 className="text-3xl font-bold">Pricing</h1>
         </div>
-        
-        <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-          <DialogTrigger asChild>
-            <Button onClick={() => setEditingPricing(null)}>
-              <Plus className="h-4 w-4 mr-2" />
-              Add Pricing
-            </Button>
-          </DialogTrigger>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>
-                {editingPricing ? 'Edit Pricing' : 'Add New Pricing'}
-              </DialogTitle>
-              <DialogDescription>
-                {editingPricing ? 'Update pricing information' : 'Create a new pricing rule'}
-              </DialogDescription>
-            </DialogHeader>
-            
-            <form onSubmit={handleSubmit} className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <Label htmlFor="bottle_type">Bottle Type *</Label>
-                  <Select name="bottle_type" defaultValue={editingPricing?.bottle_type} required>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select bottle type" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="normal">Normal</SelectItem>
-                      <SelectItem value="cool">Cool</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div>
-                  <Label htmlFor="customer_type">Customer Type *</Label>
-                  <Select name="customer_type" defaultValue={editingPricing?.customer_type} required>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select customer type" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="household">Household</SelectItem>
-                      <SelectItem value="shop">Shop</SelectItem>
-                      <SelectItem value="function">Function/Event</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-              
-              <div>
-                <Label htmlFor="price">Price per Bottle (₹) *</Label>
-                <Input
-                  id="price"
-                  name="price"
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  defaultValue={editingPricing?.price || ''}
-                  placeholder="0.00"
-                  required
-                />
-              </div>
-              
-              <Button type="submit" className="w-full">
-                {editingPricing ? 'Update Pricing' : 'Create Pricing'}
+        <div className="flex items-center gap-2">
+          <Button variant="outline" onClick={async () => {
+            try {
+              // Build defaults list
+              const defaults = [
+                // household
+                { bottle_type: 'normal', customer_type: 'household', pricing_for: 'filling', price: 20 },
+                { bottle_type: 'normal', customer_type: 'household', pricing_for: 'bottle',  price: 20 },
+                { bottle_type: 'cool',   customer_type: 'household', pricing_for: 'filling', price: 25 },
+                { bottle_type: 'cool',   customer_type: 'household', pricing_for: 'bottle',  price: 25 },
+                // shop
+                { bottle_type: 'normal', customer_type: 'shop',      pricing_for: 'filling', price: 18 },
+                { bottle_type: 'normal', customer_type: 'shop',      pricing_for: 'bottle',  price: 18 },
+                { bottle_type: 'cool',   customer_type: 'shop',      pricing_for: 'filling', price: 23 },
+                { bottle_type: 'cool',   customer_type: 'shop',      pricing_for: 'bottle',  price: 23 },
+                // function
+                { bottle_type: 'normal', customer_type: 'function',  pricing_for: 'filling', price: 15 },
+                { bottle_type: 'normal', customer_type: 'function',  pricing_for: 'bottle',  price: 15 },
+                { bottle_type: 'cool',   customer_type: 'function',  pricing_for: 'filling', price: 20 },
+                { bottle_type: 'cool',   customer_type: 'function',  pricing_for: 'bottle',  price: 20 },
+                // hotel
+                { bottle_type: 'normal', customer_type: 'hotel',     pricing_for: 'filling', price: 22 },
+                { bottle_type: 'normal', customer_type: 'hotel',     pricing_for: 'bottle',  price: 22 },
+                { bottle_type: 'cool',   customer_type: 'hotel',     pricing_for: 'filling', price: 27 },
+                { bottle_type: 'cool',   customer_type: 'hotel',     pricing_for: 'bottle',  price: 27 },
+              ] as const;
+
+              // Determine existing
+              const existingSet = new Set(pricings.map(p => `${p.bottle_type}|${p.customer_type}|${p.pricing_for}`));
+              const toInsert = defaults
+                .filter((d) => !existingSet.has(`${d.bottle_type}|${d.customer_type}|${d.pricing_for}`))
+                .map((d) => ({ ...d, owner_user_id: user!.id }));
+              if (toInsert.length === 0) {
+                toast({ title: 'Nothing to seed', description: 'All defaults already exist.' });
+                return;
+              }
+              const { error } = await supabase
+                .from('pricing')
+                .upsert(toInsert as any, { onConflict: 'owner_user_id,bottle_type,customer_type,pricing_for', ignoreDuplicates: true });
+              if (error) throw error;
+              toast({ title: 'Seeded', description: `Added ${toInsert.length} default pricing ${toInsert.length === 1 ? 'row' : 'rows'}.` });
+              fetchPricings();
+            } catch (e: any) {
+              toast({ variant: 'destructive', title: 'Error', description: e.message });
+            }
+          }}>Seed Defaults</Button>
+          
+          <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+            <DialogTrigger asChild>
+              <Button onClick={() => setEditingPricing(null)}>
+                <Plus className="h-4 w-4 mr-2" />
+                Add Pricing
               </Button>
-            </form>
-          </DialogContent>
-        </Dialog>
+            </DialogTrigger>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>
+                  {editingPricing ? 'Edit Pricing' : 'Add New Pricing'}
+                </DialogTitle>
+                <DialogDescription>
+                  {editingPricing ? 'Update pricing information' : 'Create a new pricing rule'}
+                </DialogDescription>
+              </DialogHeader>
+              <form onSubmit={handleSubmit} className="space-y-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label htmlFor="bottle_type">Bottle Type *</Label>
+                    <Select name="bottle_type" defaultValue={editingPricing?.bottle_type} required>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select bottle type" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="normal">Normal</SelectItem>
+                        <SelectItem value="cool">Cool</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div>
+                    <Label htmlFor="customer_type">Customer Type *</Label>
+                    <Select name="customer_type" defaultValue={editingPricing?.customer_type} required>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select customer type" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="household">Household</SelectItem>
+                        <SelectItem value="shop">Shop</SelectItem>
+                        <SelectItem value="function">Function/Event</SelectItem>
+                        <SelectItem value="hotel">Hotel</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+                <div>
+                  <Label htmlFor="pricing_for">Mode *</Label>
+                  <Select name="pricing_for" defaultValue={editingPricing?.pricing_for ?? 'filling'} required>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select mode" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="filling">Filling</SelectItem>
+                      <SelectItem value="bottle">Bottle</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <Label htmlFor="price">Price per Bottle (₹) *</Label>
+                  <Input
+                    id="price"
+                    name="price"
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    defaultValue={editingPricing?.price || ''}
+                    placeholder="0.00"
+                    required
+                  />
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button type="submit" className="w-full" disabled={dialogLoading}>
+                    {dialogLoading ? (
+                      <span className="inline-flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" /> {editingPricing ? 'Updating' : 'Creating'}</span>
+                    ) : (editingPricing ? 'Update Pricing' : 'Create Pricing')}
+                  </Button>
+                  {dialogRetry && !dialogLoading && (
+                    <Button type="button" variant="outline" onClick={() => (editingPricing ? handleSubmit(new Event('submit') as any) : handleSubmit(new Event('submit') as any))}>Retry</Button>
+                  )}
+                </div>
+              </form>
+            </DialogContent>
+          </Dialog>
+        </div>
       </div>
 
       <div className="flex gap-4 items-center">
@@ -365,12 +526,52 @@ const Pricing = () => {
             <SelectItem value="household">Household</SelectItem>
             <SelectItem value="shop">Shop</SelectItem>
             <SelectItem value="function">Function</SelectItem>
+            <SelectItem value="hotel">Hotel</SelectItem>
           </SelectContent>
         </Select>
         <div className="text-sm text-muted-foreground">
           {filteredPricings.length} of {pricings.length} pricing rules
         </div>
       </div>
+
+      {/* Quick Setup for missing combinations */}
+      {missingCombos.length > 0 && (
+        <div className="rounded border p-4 space-y-3">
+          <div className="text-base font-semibold">Quick Setup: Missing Pricing</div>
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {missingCombos.map(({ bottle_type, customer_type, pricing_for }) => {
+              const key = `${bottle_type}|${customer_type}|${pricing_for}`;
+              return (
+                <div key={key} className="flex items-end gap-2">
+                  <div className="flex-1">
+                    <div className="text-sm text-muted-foreground mb-1">{customer_type} / {bottle_type} ({pricing_for})</div>
+                    <Input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={quickPrice[key] ?? ''}
+                      placeholder="0.00"
+                      onChange={(e) => setQuickPrice(prev => ({ ...prev, [key]: e.target.value }))}
+                      className="bg-white"
+                    />
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Button onClick={() => addQuickPrice(bottle_type, customer_type, pricing_for)} className="shrink-0" disabled={!!quickLoading[key]}>
+                      {quickLoading[key] ? (
+                        <span className="inline-flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" /> Adding</span>
+                      ) : 'Add'}
+                    </Button>
+                    {quickRetry[key] && !quickLoading[key] && (
+                      <Button type="button" variant="outline" onClick={() => addQuickPrice(bottle_type, customer_type, pricing_for)}>Retry</Button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          <div className="text-xs text-muted-foreground">Set prices for missing combinations here to stop seeing "Pricing not set" in other pages.</div>
+        </div>
+      )}
 
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
         {filteredPricings.map((pricing) => (
@@ -409,6 +610,13 @@ const Pricing = () => {
                   <span className="text-sm text-muted-foreground">Customer Type:</span>
                   <Badge variant="secondary" className={getCustomerTypeColor(pricing.customer_type)}>
                     {pricing.customer_type}
+                  </Badge>
+                </div>
+                
+                <div className="flex justify-between items-center">
+                  <span className="text-sm text-muted-foreground">Mode:</span>
+                  <Badge variant="secondary">
+                    {pricing.pricing_for}
                   </Badge>
                 </div>
                 

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { withTimeoutRetry } from '@/lib/supaRequest';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -26,7 +27,8 @@ interface BottleRow {
 
 interface PricingRow {
   bottle_type: 'normal' | 'cool';
-  customer_type: 'household' | 'shop' | 'function';
+  customer_type: 'household' | 'shop' | 'function' | 'hotel';
+  pricing_for: 'filling' | 'bottle';
   price: number;
 }
 
@@ -59,6 +61,8 @@ const Shop = () => {
 
   const { toast } = useToast();
   const { user } = useAuth();
+  const [loadingFill, setLoadingFill] = useState(false);
+  const [loadingBottleWater, setLoadingBottleWater] = useState(false);
 
   useEffect(() => {
     if (!user) return;
@@ -292,7 +296,7 @@ const Shop = () => {
   const fetchPricing = async () => {
     const { data, error } = await supabase
       .from('pricing')
-      .select('bottle_type, customer_type, price')
+      .select('bottle_type, customer_type, pricing_for, price')
       .eq('owner_user_id', user!.id);
     if (error) {
       toast({ variant: 'destructive', title: 'Error', description: error.message });
@@ -323,8 +327,8 @@ const Shop = () => {
     );
   }, [customers, search]);
 
-  const getUnitPrice = (ctype: 'household' | 'shop' | 'function', bt: 'normal' | 'cool') => {
-    const row = pricing.find(p => p.customer_type === ctype && p.bottle_type === bt);
+  const getUnitPrice = (ctype: 'household' | 'shop' | 'function' | 'hotel', bt: 'normal' | 'cool', pf: 'filling' | 'bottle') => {
+    const row = pricing.find(p => p.customer_type === ctype && p.bottle_type === bt && p.pricing_for === pf);
     return row?.price;
   };
 
@@ -354,6 +358,7 @@ const Shop = () => {
 
   const handleFill = async (overrideAmount?: number) => {
     try {
+      setLoadingFill(true);
       const customerId = mode === 'guest' ? await ensureGuestCustomer() : selectedCustomerId;
       if (!customerId) {
         toast({ variant: 'destructive', title: 'Select customer', description: 'Please select a customer' });
@@ -370,14 +375,14 @@ const Shop = () => {
       }
       const customer = customers.find(c => c.id === customerId);
       const ctype = mode === 'guest' ? 'shop' : (customer?.customer_type as any);
-      const price = getUnitPrice(ctype, bottleType);
+      const price = getUnitPrice(ctype, bottleType, 'filling');
       if (price === undefined) {
         toast({ variant: 'destructive', title: 'Pricing missing', description: `No pricing for ${ctype}/${bottleType}` });
         return;
       }
       const calcAmount = overrideAmount !== undefined ? overrideAmount : price * qNum;
 
-      const { data: txIns, error: txErr } = await supabase.from('transactions').insert({
+      const { data: txIns, error: txErr } = await withTimeoutRetry(() => supabase.from('transactions').insert({
         customer_id: customerId,
         transaction_type: 'delivery',
         quantity: qNum,
@@ -386,12 +391,12 @@ const Shop = () => {
         transaction_date: new Date().toISOString(),
         notes: mode === 'guest' ? 'Shop fill (guest)' : 'Shop fill (customer)',
         owner_user_id: user!.id,
-      }).select('id').single();
+      }).select('id').single());
       if (txErr) throw txErr;
 
       // Balance update for customer mode only (guests not tracked)
       if (mode === 'customer' && customer) {
-        await supabase.from('customers').update({ balance: (customer.balance || 0) + calcAmount }).eq('id', customer.id);
+        await withTimeoutRetry(() => supabase.from('customers').update({ balance: (customer.balance || 0) + calcAmount }).eq('id', customer.id));
       }
 
       toast({ title: 'Recorded', description: `Filled ${quantity} ${bottleType}` });
@@ -399,11 +404,14 @@ const Shop = () => {
       setQuantity(1);
     } catch (error: any) {
       toast({ variant: 'destructive', title: 'Error', description: error.message });
+    } finally {
+      setLoadingFill(false);
     }
   };
 
   const handleBottleAndWater = async (overrideAmount?: number) => {
     try {
+      setLoadingBottleWater(true);
       if (mode !== 'customer') {
         toast({ variant: 'destructive', title: 'Not allowed', description: 'Guests cannot take bottles' });
         return;
@@ -414,7 +422,7 @@ const Shop = () => {
       }
       // First process returns if any
       if (returnBottleIds.length > 0) {
-        await markReturns(selectedCustomerId);
+        await withTimeoutRetry(() => markReturns(selectedCustomerId));
       }
       if (selectedBottleIds.length === 0) {
         toast({ variant: 'destructive', title: 'Select bottles', description: 'Select one or more bottles to take' });
@@ -423,18 +431,18 @@ const Shop = () => {
       const customer = customers.find(c => c.id === selectedCustomerId)!;
       const bottlesSelected = inStock.filter(b => selectedBottleIds.includes(b.id));
       // Sum price by current selected water type
-      const unit = getUnitPrice(customer.customer_type, bottleType) || 0;
+      const unit = getUnitPrice(customer.customer_type as any, bottleType, 'bottle') || 0;
       const defaultTotal = unit * bottlesSelected.length;
       const total = overrideAmount !== undefined ? overrideAmount : defaultTotal;
 
-      const { error: updErr } = await supabase
+      const { error: updErr } = await withTimeoutRetry(() => supabase
         .from('bottles')
         .update({ current_customer_id: selectedCustomerId, is_returned: false })
-        .in('id', selectedBottleIds);
+        .in('id', selectedBottleIds));
       if (updErr) throw updErr;
 
       const bottle_numbers = bottlesSelected.map(b => b.bottle_number);
-      const { data: txIns, error: txErr } = await supabase.from('transactions').insert({
+      const { data: txIns, error: txErr } = await withTimeoutRetry(() => supabase.from('transactions').insert({
         customer_id: selectedCustomerId,
         transaction_type: 'delivery',
         quantity: bottle_numbers.length,
@@ -444,10 +452,10 @@ const Shop = () => {
         transaction_date: new Date().toISOString(),
         notes: 'Shop take bottle + fill',
         owner_user_id: user!.id,
-      }).select('id').single();
+      }).select('id').single());
       if (txErr) throw txErr;
 
-      await supabase.from('customers').update({ balance: (customer.balance || 0) + total }).eq('id', customer.id);
+      await withTimeoutRetry(() => supabase.from('customers').update({ balance: (customer.balance || 0) + total }).eq('id', customer.id));
 
       toast({ title: 'Recorded', description: `Bottles issued: ${bottle_numbers.join(', ')}` });
       setSelectedBottleIds([]);
@@ -636,9 +644,8 @@ const Shop = () => {
               <div className="space-y-2">
                 <div className="text-sm text-muted-foreground">
                   {(() => {
-                    const ctype = mode === 'guest' ? 'shop' : (customers.find(c => c.id === selectedCustomerId)?.customer_type || 'shop');
-                    const p = getUnitPrice(ctype as any, bottleType);
-                    const calc = p !== undefined ? p * quantity : undefined;
+                    const ctype = (mode === 'guest' ? 'shop' : (customers.find(c => c.id === selectedCustomerId)?.customer_type || 'shop')) as 'household' | 'shop' | 'function' | 'hotel';
+                    const p = getUnitPrice(ctype, bottleType, 'filling');
                     return p !== undefined ? `Price: ₹${p.toFixed(2)}` : 'Pricing not set';
                   })()}
                 </div>
@@ -647,9 +654,14 @@ const Shop = () => {
                   <Input
                     type="number"
                     min={0}
-                    value={amount === '' ? (() => { const ctype = mode === 'guest' ? 'shop' : (customers.find(c => c.id === selectedCustomerId)?.customer_type || 'shop'); const p = getUnitPrice(ctype as any, bottleType); const qNum = typeof quantity === 'number' ? quantity : 0; return p !== undefined && qNum > 0 ? p * qNum : '' })() : amount}
+                    value={amount}
                     onChange={(e) => setAmount(e.target.value === '' ? '' : Number(e.target.value))}
-                    placeholder="Auto-calculated. You can override."
+                    placeholder={(() => {
+                      const ctype = mode === 'guest' ? 'shop' : (customers.find(c => c.id === selectedCustomerId)?.customer_type || 'shop');
+                      const p = getUnitPrice(ctype as any, bottleType, 'filling');
+                      const qNum = typeof quantity === 'number' ? quantity : 0;
+                      return p !== undefined && qNum > 0 ? String(p * qNum) : 'Auto-calculated. You can override.';
+                    })()}
                   />
                 </div>
                 {mode === 'customer' && !selectedCustomerId && (
@@ -663,7 +675,7 @@ const Shop = () => {
                     const ret = returnBottleIds.length;
                     const calc = (() => {
                       const ctype = mode === 'guest' ? 'shop' : (customers.find(c => c.id === selectedCustomerId)?.customer_type || 'shop');
-                      const p = getUnitPrice(ctype as any, bottleType);
+                      const p = getUnitPrice(ctype as any, bottleType, actionMode === 'fill_only' ? 'filling' : 'bottle');
                       const qNum = typeof quantity === 'number' ? quantity : 0;
                       return p !== undefined ? (typeof amount === 'number' ? amount : (qNum > 0 ? p * qNum : undefined)) : undefined;
                     })();
@@ -700,7 +712,8 @@ const Shop = () => {
                 <div className="text-sm text-muted-foreground">
                   {(() => {
                     const customer = customers.find(c => c.id === selectedCustomerId);
-                    const unit = customer ? getUnitPrice(customer.customer_type, bottleType) : undefined;
+                    const ct = (customer?.customer_type || 'shop') as 'household' | 'shop' | 'function' | 'hotel';
+                    const unit = getUnitPrice(ct, bottleType, 'bottle');
                     const calc = unit !== undefined ? unit * selectedBottleIds.length : undefined;
                     return unit !== undefined ? `Unit: ₹${unit.toFixed(2)} • Total: ₹${(calc || 0).toFixed(2)}` : 'Pricing not set';
                   })()}
@@ -710,9 +723,14 @@ const Shop = () => {
                   <Input
                     type="number"
                     min={0}
-                    value={amount === '' ? (() => { const customer = customers.find(c => c.id === selectedCustomerId); const unit = customer ? getUnitPrice(customer.customer_type, bottleType) : undefined; return unit !== undefined ? unit * selectedBottleIds.length : '' })() : amount}
+                    value={amount}
                     onChange={(e) => setAmount(e.target.value === '' ? '' : Number(e.target.value))}
-                    placeholder="Auto-calculated. You can override."
+                    placeholder={(() => {
+                      const customer = customers.find(c => c.id === selectedCustomerId);
+                      const ct = (customer?.customer_type || 'shop') as 'household' | 'shop' | 'function' | 'hotel';
+                      const unit = getUnitPrice(ct as any, bottleType, 'bottle');
+                      return unit !== undefined ? String(unit * selectedBottleIds.length) : 'Auto-calculated. You can override.';
+                    })()}
                   />
                 </div>
                 <div className="flex items-end">

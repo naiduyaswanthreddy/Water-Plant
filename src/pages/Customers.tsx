@@ -18,7 +18,7 @@ interface Customer {
   name: string;
   phone?: string;
   address?: string;
-  customer_type: 'household' | 'shop' | 'function';
+  customer_type: 'household' | 'shop' | 'function' | 'hotel';
   delivery_type: 'daily' | 'alternate' | 'weekly';
   balance: number;
   deposit_amount: number;
@@ -111,6 +111,18 @@ const Customers = () => {
             // If the dialog is open for a specific customer, refresh their recent transactions
             if (activeCustomer && tx.customer_id === activeCustomer.id) {
               fetchTransactions(activeCustomer.id, 0, true);
+              // Recompute this customer's balance and refresh row
+              schedule(async () => {
+                try {
+                  await recomputeCustomerBalance(activeCustomer.id);
+                  const { data: fresh } = await supabase
+                    .from('customers')
+                    .select('*')
+                    .eq('id', activeCustomer.id)
+                    .single();
+                  if (fresh) setActiveCustomer(fresh as any);
+                } catch {}
+              });
             }
           }
         }
@@ -161,6 +173,16 @@ const Customers = () => {
     setTxPage(0);
     setTxHasMore(true);
     await fetchTransactions(customer.id, 0, true);
+    // Ensure balance shown is correct by recomputing from transactions
+    try {
+      await recomputeCustomerBalance(customer.id);
+      const { data: fresh } = await supabase
+        .from('customers')
+        .select('*')
+        .eq('id', customer.id)
+        .single();
+      if (fresh) setActiveCustomer(fresh as any);
+    } catch {}
   };
 
   const fetchTransactions = async (customerId: string, page: number = 0, replace: boolean = false) => {
@@ -186,6 +208,30 @@ const Customers = () => {
     } finally {
       setTxLoading(false);
     }
+  };
+
+  // Recompute customer's balance from transactions to avoid stale local state issues
+  const recomputeCustomerBalance = async (customerId: string) => {
+    const { data, error } = await supabase
+      .from('transactions')
+      .select('transaction_type, amount')
+      .eq('customer_id', customerId)
+      .eq('owner_user_id', user!.id);
+    if (error) throw error;
+    let deliveries = 0;
+    let payments = 0;
+    for (const t of data || []) {
+      const amt = (t as any).amount || 0;
+      if ((t as any).transaction_type === 'delivery') deliveries += amt;
+      if ((t as any).transaction_type === 'payment') payments += amt;
+    }
+    // Balance is defined as credit: payments - deliveries
+    const balance = payments - deliveries;
+    const { error: updErr } = await supabase
+      .from('customers')
+      .update({ balance })
+      .eq('id', customerId);
+    if (updErr) throw updErr;
   };
 
   const handleRecordPayment = async (e: React.FormEvent<HTMLFormElement>) => {
@@ -214,19 +260,21 @@ const Customers = () => {
       });
       if (error) throw error;
 
-      // Update balance: subtract payment
-      const newBalance = (activeCustomer.balance || 0) - amount;
-      const { error: balErr } = await supabase
-        .from('customers')
-        .update({ balance: newBalance })
-        .eq('id', activeCustomer.id);
-      if (balErr) throw balErr;
+      // Recompute balance from transactions to ensure correctness
+      await recomputeCustomerBalance(activeCustomer.id);
 
       toast({ title: 'Payment recorded', description: `₹${amount.toFixed(2)} recorded for ${activeCustomer.name}` });
       // Refresh lists and details
       await fetchCustomers();
-      const updated = (customers.find(c => c.id === activeCustomer.id) || activeCustomer);
-      setActiveCustomer(updated);
+      // Fetch the fresh row for the active customer to avoid stale state
+      const { data: fresh, error: freshErr } = await supabase
+        .from('customers')
+        .select('*')
+        .eq('id', activeCustomer.id)
+        .single();
+      if (!freshErr && fresh) {
+        setActiveCustomer(fresh as any);
+      }
       await fetchTransactions(activeCustomer.id);
       (e.currentTarget as HTMLFormElement).reset();
     } catch (error: any) {
@@ -366,13 +414,15 @@ const Customers = () => {
       case 'household': return 'bg-blue-100 text-blue-800';
       case 'shop': return 'bg-green-100 text-green-800';
       case 'function': return 'bg-purple-100 text-purple-800';
+      case 'hotel': return 'bg-orange-100 text-orange-800';
       default: return 'bg-gray-100 text-gray-800';
     }
   };
 
   const getBalanceColor = (balance: number) => {
-    if (balance > 0) return 'text-red-600';
-    if (balance < 0) return 'text-green-600';
+    // Positive = credit (good), Negative = due (bad)
+    if (balance > 0) return 'text-green-600';
+    if (balance < 0) return 'text-red-600';
     return 'text-gray-600';
   };
 
@@ -464,6 +514,8 @@ const Customers = () => {
                     <SelectContent>
                       <SelectItem value="household">Household</SelectItem>
                       <SelectItem value="shop">Shop</SelectItem>
+                      <SelectItem value="function">Function</SelectItem>
+                      <SelectItem value="hotel">Hotel</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>

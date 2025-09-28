@@ -11,6 +11,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import { Search, Truck, Check, X, PlusCircle } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
+import { withTimeoutRetry } from '@/lib/supaRequest';
 
 interface Customer {
   id: string;
@@ -68,6 +69,7 @@ const Delivery = () => {
         amount: number;
       }
   >(null);
+  const [dialogSaving, setDialogSaving] = useState(false);
 
   const { toast } = useToast();
   const { user } = useAuth();
@@ -86,6 +88,7 @@ const Delivery = () => {
       if (debounce) window.clearTimeout(debounce);
       debounce = window.setTimeout(fn, 250);
     };
+
     const channel = supabase
       .channel('realtime-delivery-page')
       .on(
@@ -310,12 +313,8 @@ const Delivery = () => {
     }).select('id').single();
     if (txErr) throw txErr;
 
-    // Update balance
-    const { error: balErr } = await supabase
-      .from('customers')
-      .update({ balance: (cust.balance || 0) + amount })
-      .eq('id', cust.id);
-    if (balErr) throw balErr;
+    // Recompute balance from transactions for correctness
+    await recomputeCustomerBalance(cust.id);
     return { transactionId: (txIns as any).id as string, amount, numbers };
   };
 
@@ -404,7 +403,7 @@ const Delivery = () => {
     cust: Customer,
     qty: number,
     bt: 'normal' | 'cool',
-    when: string,
+    whenISO: string,
     note?: string,
     overrideAmount?: number
   ): Promise<{ transactionId: string; amount: number; } | null> => {
@@ -415,31 +414,33 @@ const Delivery = () => {
       return null;
     }
 
+    const when = new Date(whenISO).toISOString();
     const amount = overrideAmount !== undefined ? overrideAmount : qty * unitPrice;
 
     // Insert transaction and update balance
-    const { data: txIns, error: txErr } = await supabase.from('transactions').insert({
-      customer_id: cust.id,
-      transaction_type: 'delivery',
-      quantity: qty,
-      bottle_type: bt,
-      amount: amount,
-      transaction_date: when,
-      notes: note || null,
-      owner_user_id: user!.id,
-    }).select('id').single();
+    const { data: txIns, error: txErr } = await withTimeoutRetry(
+      () => supabase.from('transactions').insert({
+        customer_id: cust.id,
+        transaction_type: 'delivery',
+        quantity: qty,
+        bottle_type: bt,
+        amount: amount,
+        transaction_date: when,
+        notes: note || null,
+        owner_user_id: user!.id,
+      }).select('id').single(),
+      { timeoutMs: 10000 }
+    );
     if (txErr) throw txErr;
-
-    const { error: balErr } = await supabase
-      .from('customers')
-      .update({ balance: (cust.balance || 0) + amount })
-      .eq('id', cust.id);
-    if (balErr) throw balErr;
+    // Recompute after insert
+    await recomputeCustomerBalance(cust.id);
+    return { transactionId: (txIns as any).id as string, amount };
   };
 
   const handleGivenConfirm = async () => {
     if (!activeCustomer || !dialogType) return;
     try {
+      setDialogSaving(true);
       const qNum = typeof quantity === 'number' ? quantity : 0;
       if (qNum < 1) {
         toast({ variant: 'destructive', title: 'Quantity required', description: 'Please enter a valid quantity' });
@@ -447,7 +448,7 @@ const Delivery = () => {
       }
       // First, process any returns marked from previously held bottles
       if (returnBottleIds.length > 0) {
-        await markReturns(activeCustomer, returnBottleIds, date);
+        await withTimeoutRetry(() => markReturns(activeCustomer, returnBottleIds, date), { timeoutMs: 10000 });
       }
       const effAmount = typeof amount === 'number' ? amount : undefined;
       if (mode === 'handover') {
@@ -461,10 +462,16 @@ const Delivery = () => {
           toast({ variant: 'destructive', title: 'Select bottles', description: `Please select ${qNum} ${bottleType} bottle(s) to hand over.` });
           return;
         }
-        const result = await assignBottlesDelivery(activeCustomer, selected, bottleType, date, undefined, effAmount);
+        const result = await withTimeoutRetry(
+          () => assignBottlesDelivery(activeCustomer, selected, bottleType, date, undefined, effAmount),
+          { timeoutMs: 10000 }
+        );
         setLastAction({ used: false, kind: 'handover', customerId: activeCustomer.id, transactionId: result.transactionId, bottleIds: selected, amount: result.amount });
       } else {
-        const result = await upsertDelivery(activeCustomer, qNum, bottleType, date, 'Fill only (no bottle handover)', effAmount);
+        const result = await withTimeoutRetry(
+          () => upsertDelivery(activeCustomer, qNum, bottleType, date, 'Fill only (no bottle handover)', effAmount),
+          { timeoutMs: 10000 }
+        );
         if (!result) return; // pricing missing, already toasted
         setLastAction({ used: false, kind: 'fill_only', customerId: activeCustomer.id, transactionId: result.transactionId, amount: result.amount });
       }
@@ -473,6 +480,8 @@ const Delivery = () => {
       resetDialog();
     } catch (error: any) {
       toast({ variant: 'destructive', title: 'Error', description: error.message });
+    } finally {
+      setDialogSaving(false);
     }
   };
 
@@ -480,26 +489,16 @@ const Delivery = () => {
     if (!lastAction || lastAction.used) return;
     try {
       // Delete the transaction
-      await supabase.from('transactions').delete().eq('id', lastAction.transactionId);
+      await withTimeoutRetry(() => supabase.from('transactions').delete().eq('id', lastAction.transactionId), { timeoutMs: 10000 });
       // Revert bottles if any were handed over
       if (lastAction.bottleIds && lastAction.bottleIds.length > 0) {
-        await supabase
+        await withTimeoutRetry(() => supabase
           .from('bottles')
           .update({ current_customer_id: null, is_returned: true })
-          .in('id', lastAction.bottleIds);
+          .in('id', lastAction.bottleIds), { timeoutMs: 10000 });
       }
-      // Revert customer balance
-      const { data: cust } = await supabase
-        .from('customers')
-        .select('balance')
-        .eq('id', lastAction.customerId)
-        .single();
-      if (cust) {
-        await supabase
-          .from('customers')
-          .update({ balance: Math.max(0, (cust.balance || 0) - lastAction.amount) })
-          .eq('id', lastAction.customerId);
-      }
+      // Recompute customer balance for correctness instead of clamping
+      await recomputeCustomerBalance(lastAction.customerId);
       setLastAction(prev => (prev ? { ...prev, used: true } : prev));
       toast({ title: 'Undone', description: 'Last action has been reverted' });
       await fetchData();
@@ -511,6 +510,7 @@ const Delivery = () => {
   const handleExtraConfirm = async () => {
     if (!activeCustomer || !dialogType) return;
     try {
+      setDialogSaving(true);
       const qNum = typeof quantity === 'number' ? quantity : 0;
       if (qNum < 1) {
         toast({ variant: 'destructive', title: 'Quantity required', description: 'Please enter a valid quantity' });
@@ -518,7 +518,7 @@ const Delivery = () => {
       }
       // Process any returns marked from previously held bottles
       if (returnBottleIds.length > 0) {
-        await markReturns(activeCustomer, returnBottleIds, date);
+        await withTimeoutRetry(() => markReturns(activeCustomer, returnBottleIds, date), { timeoutMs: 10000 });
       }
       const effAmount = typeof amount === 'number' ? amount : undefined;
       if (mode === 'handover') {
@@ -533,11 +533,17 @@ const Delivery = () => {
           toast({ variant: 'destructive', title: 'Select bottles', description: `Please select ${qNum} ${bottleType} bottle(s) to hand over.` });
           return;
         }
-        const result = await assignBottlesDelivery(activeCustomer, selected, bottleType, date, 'Extra', effAmount);
+        const result = await withTimeoutRetry(
+          () => assignBottlesDelivery(activeCustomer, selected, bottleType, date, 'Extra', effAmount),
+          { timeoutMs: 10000 }
+        );
         setLastAction({ used: false, kind: 'extra_handover', customerId: activeCustomer.id, transactionId: result.transactionId, bottleIds: selected, amount: result.amount });
       } else {
         // Fill only extra delivery (no bottle handover)
-        const result = await upsertDelivery(activeCustomer, qNum, bottleType, date, 'Extra (fill only)', effAmount);
+        const result = await withTimeoutRetry(
+          () => upsertDelivery(activeCustomer, qNum, bottleType, date, 'Extra (fill only)', effAmount),
+          { timeoutMs: 10000 }
+        );
         if (!result) return; // pricing missing, already toasted
         setLastAction({ used: false, kind: 'extra_fill', customerId: activeCustomer.id, transactionId: result.transactionId, amount: result.amount });
       }
@@ -546,13 +552,15 @@ const Delivery = () => {
       resetDialog();
     } catch (error: any) {
       toast({ variant: 'destructive', title: 'Error', description: error.message });
+    } finally {
+      setDialogSaving(false);
     }
   };
 
   const handleSkipped = async (customer: Customer) => {
     try {
       const when = new Date().toISOString();
-      const { error } = await supabase.from('transactions').insert({
+      const { error } = await withTimeoutRetry(() => supabase.from('transactions').insert({
         customer_id: customer.id,
         transaction_type: 'delivery',
         quantity: 0,
@@ -561,7 +569,7 @@ const Delivery = () => {
         transaction_date: when,
         notes: 'Skipped delivery',
         owner_user_id: user!.id,
-      });
+      }), { timeoutMs: 10000 });
       if (error) throw error;
       toast({ title: 'Marked skipped', description: `${customer.name} marked as skipped for today` });
       await fetchData();
@@ -824,8 +832,13 @@ const Delivery = () => {
                   id="amount"
                   type="number"
                   min={0}
-                  value={amount === '' ? (() => { const unit = householdPrices[bottleType]; const qNum = typeof quantity === 'number' ? quantity : 0; return unit !== undefined && qNum > 0 ? unit * qNum : '' })() : amount}
+                  value={amount}
                   onChange={(e) => setAmount(e.target.value === '' ? '' : Number(e.target.value))}
+                  placeholder={(() => {
+                    const unit = householdPrices[bottleType];
+                    const qNum = typeof quantity === 'number' ? quantity : 0;
+                    return unit !== undefined && qNum > 0 ? String(unit * qNum) : '';
+                  })()}
                   className="bg-white"
                 />
               </div>

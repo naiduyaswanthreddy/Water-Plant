@@ -13,6 +13,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import { Plus, Search, Edit, Trash2, Calendar, Users, CheckCircle, Clock } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
+import { withTimeoutRetry } from '@/lib/supaRequest';
 
 interface FunctionOrder {
   id: string;
@@ -36,16 +37,19 @@ interface Customer {
 }
 
 const FunctionOrders = () => {
+  // Top-level Events section toggle
+  const [section, setSection] = useState<'functions' | 'hotels'>('functions');
   const [orders, setOrders] = useState<FunctionOrder[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [inStockBottles, setInStockBottles] = useState<{ id: string; bottle_number: string; bottle_type: 'normal' | 'cool' }[]>([]);
   const [selectedBottleIds, setSelectedBottleIds] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
-  const [pricing, setPricing] = useState<Array<{ id: string; bottle_type: 'normal' | 'cool'; customer_type: 'household' | 'shop' | 'function'; price: number }>>([]);
+  const [pricing, setPricing] = useState<Array<{ id: string; bottle_type: 'normal' | 'cool'; customer_type: 'household' | 'shop' | 'function' | 'hotel'; price: number }>>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingOrder, setEditingOrder] = useState<FunctionOrder | null>(null);
   const [filterStatus, setFilterStatus] = useState<string>('all');
+  const [saving, setSaving] = useState(false);
   // Edit-only tabs and receiving state
   const [activeTab, setActiveTab] = useState<'giving' | 'receiving'>('giving');
   // Bottles tied to this specific order (for receiving list)
@@ -58,21 +62,35 @@ const FunctionOrders = () => {
   const [overrideTotal, setOverrideTotal] = useState<string>('');
   const { toast } = useToast();
   const { user } = useAuth();
+  // Existing customer picker state for new orders
+  const [existingCustomerId, setExistingCustomerId] = useState<string | null>(null);
+  const [customerSearchOpen, setCustomerSearchOpen] = useState<boolean>(false);
 
-  // Auto total for UI from currently selected bottles using function pricing
+  // Auto total for UI from currently selected bottles using selected section pricing
   const autoTotal = useMemo(() => {
     const selected = inStockBottles.filter((b) => selectedBottleIds.includes(b.id));
     return selected.reduce((sum, b) => {
-      const pr = pricing.find(p => p.customer_type === 'function' && p.bottle_type === b.bottle_type);
+      const pr = pricing.find(p => p.customer_type === (section === 'functions' ? 'function' : 'hotel') && p.bottle_type === b.bottle_type);
       return sum + (pr ? pr.price : 0);
     }, 0);
-  }, [inStockBottles, selectedBottleIds, pricing]);
+  }, [inStockBottles, selectedBottleIds, pricing, section]);
 
   useEffect(() => {
     if (!user) return;
     fetchData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user?.id]);
+  }, [user?.id, section]);
+
+  // Reset selection when switching section or closing dialog
+  useEffect(() => {
+    if (!isDialogOpen) {
+      setExistingCustomerId(null);
+      setNewFuncName('');
+      setNewFuncPhone('');
+      setOverrideTotal('');
+      setSelectedBottleIds([]);
+    }
+  }, [isDialogOpen, section]);
 
   // Realtime: keep orders view in sync
   useEffect(() => {
@@ -158,7 +176,7 @@ const FunctionOrders = () => {
       const [ordersResult, customersResult, bottlesResult, pricingResult] = await Promise.all([
         supabase.from('function_orders').select('*').eq('owner_user_id', user!.id).order('event_date', { ascending: false }),
         supabase.from('customers').select('id, name, pin, customer_type')
-          .eq('customer_type', 'function')
+          .eq('customer_type', section === 'functions' ? 'function' : 'hotel')
           .eq('owner_user_id', user!.id)
           .order('name'),
         supabase.from('bottles').select('id, bottle_number, bottle_type, is_returned').eq('is_returned', true).eq('owner_user_id', user!.id).order('bottle_number'),
@@ -262,45 +280,52 @@ const FunctionOrders = () => {
     e.preventDefault();
     
     const formData = new FormData(e.currentTarget);
-    // Compute auto total for selected bottles using function pricing
+    // Compute auto total for selected bottles using selected section pricing
     const selected = inStockBottles.filter((b) => selectedBottleIds.includes(b.id));
     const calcTotal = selected.reduce((sum, b) => {
-      const pr = pricing.find(p => p.customer_type === 'function' && p.bottle_type === b.bottle_type);
+      const pr = pricing.find(p => p.customer_type === (section === 'functions' ? 'function' : 'hotel') && p.bottle_type === b.bottle_type);
       return sum + (pr ? pr.price : 0);
     }, 0);
 
-    // Decide customer: if editing use selected customer_id, otherwise create a new function customer
+    // Decide customer: if editing use selected customer_id; if a matching existing customer was selected in typeahead, use it; otherwise create a new customer
     let customer_id: string | null = editingOrder ? (formData.get('customer_id') as string) : null;
     if (!editingOrder) {
+      if (existingCustomerId) {
+        customer_id = existingCustomerId;
+      } else {
       if (!newFuncName.trim()) {
-        toast({ variant: 'destructive', title: 'Missing name', description: 'Please enter a function customer name' });
+        toast({ variant: 'destructive', title: 'Missing name', description: `Please enter a ${section === 'functions' ? 'function' : 'hotel'} customer name` });
         return;
       }
       // Try to generate a unique PIN if RPC exists; fall back to timestamp
-      let pin = 'F' + Math.floor(1000 + Math.random() * 9000).toString();
+      let pin = (section === 'functions' ? 'F' : 'H') + Math.floor(1000 + Math.random() * 9000).toString();
       try {
         const { data: pinData } = await supabase.rpc('generate_unique_pin');
         if (pinData) pin = pinData as string;
       } catch {}
-      const { data: custIns, error: custErr } = await supabase
-        .from('customers')
-        .insert({
-          name: newFuncName.trim(),
-          phone: newFuncPhone || null,
-          pin,
-          customer_type: 'function',
-          delivery_type: 'daily',
-          balance: 0,
-          deposit_amount: 0,
-          owner_user_id: user!.id
-        })
-        .select('id')
-        .single();
+      const { data: custIns, error: custErr } = await withTimeoutRetry(
+        () => supabase
+          .from('customers')
+          .insert({
+            name: newFuncName.trim(),
+            phone: newFuncPhone || null,
+            pin,
+            customer_type: (section === 'functions' ? 'function' : 'hotel') as any,
+            delivery_type: 'daily',
+            balance: 0,
+            deposit_amount: 0,
+            owner_user_id: user!.id
+          })
+          .select('id')
+          .single(),
+        { timeoutMs: 10000 }
+      );
       if (custErr) {
         toast({ variant: 'destructive', title: 'Error', description: custErr.message });
         return;
       }
       customer_id = custIns?.id as string;
+      }
     }
 
     const finalTotal = overrideTotal ? parseFloat(overrideTotal) || 0 : calcTotal;
@@ -317,20 +342,21 @@ const FunctionOrders = () => {
     };
 
     try {
+      setSaving(true);
       let orderId = editingOrder?.id || null;
       if (!editingOrder) {
-        const { data, error } = await supabase
-          .from('function_orders')
-          .insert({ ...orderData, owner_user_id: user!.id })
-          .select('id')
-          .single();
+        const { data, error } = await withTimeoutRetry(
+          () => supabase
+            .from('function_orders')
+            .insert({ ...orderData, owner_user_id: user!.id })
+            .select('id')
+            .single(),
+          { timeoutMs: 10000 }
+        );
         
         if (error) throw error;
         
-        toast({
-          title: "Success",
-          description: "Function order created successfully"
-        });
+        toast({ title: 'Success', description: `${section === 'functions' ? 'Function' : 'Hotel'} order created successfully` });
         // Attempt to retrieve the inserted order id if returned
         if (data && (data as any).id) {
           orderId = (data as any).id as string;
@@ -347,37 +373,46 @@ const FunctionOrders = () => {
           updatePayload.bottles_supplied = editingOrder.bottles_supplied + addedCount;
           updatePayload.total_amount = (editingOrder.total_amount || 0) + addedAmount;
         }
-        const { error } = await supabase
-          .from('function_orders')
-          .update(updatePayload)
-          .eq('id', editingOrder.id);
+        const { error } = await withTimeoutRetry(
+          () => supabase
+            .from('function_orders')
+            .update(updatePayload)
+            .eq('id', editingOrder.id),
+          { timeoutMs: 10000 }
+        );
         if (error) throw error;
-        toast({ title: 'Success', description: 'Function order updated successfully' });
+        toast({ title: 'Success', description: `${section === 'functions' ? 'Function' : 'Hotel'} order updated successfully` });
         orderId = editingOrder.id;
 
         // If additional bottles were selected while editing, assign them and record delivery + mapping
         if (selectedBottleIds.length > 0) {
           const bottleNumbers = selected.map((b) => b.bottle_number);
           // Assign bottles to this function customer
-          const { error: updErr } = await supabase
-            .from('bottles')
-            .update({ current_customer_id: orderData.customer_id, is_returned: false })
-            .in('id', selectedBottleIds);
+          const { error: updErr } = await withTimeoutRetry(
+            () => supabase
+              .from('bottles')
+              .update({ current_customer_id: orderData.customer_id, is_returned: false })
+              .in('id', selectedBottleIds),
+            { timeoutMs: 10000 }
+          );
           if (updErr) throw updErr;
 
           // Create a delivery transaction for these extra bottles
-          const { error: txErr } = await supabase
-            .from('transactions')
-            .insert({
-              customer_id: orderData.customer_id,
-              transaction_type: 'delivery',
-              quantity: bottleNumbers.length,
-              bottle_numbers: bottleNumbers,
-              amount: addedAmount,
-              transaction_date: new Date().toISOString(),
-              notes: orderData.event_name ? `Function: ${orderData.event_name}` : 'Function order bottles supplied',
-              owner_user_id: user!.id,
-            });
+          const { error: txErr } = await withTimeoutRetry(
+            () => supabase
+              .from('transactions')
+              .insert({
+                customer_id: orderData.customer_id,
+                transaction_type: 'delivery',
+                quantity: bottleNumbers.length,
+                bottle_numbers: bottleNumbers,
+                amount: addedAmount,
+                transaction_date: new Date().toISOString(),
+                notes: orderData.event_name ? `${section === 'functions' ? 'Function' : 'Hotel'}: ${orderData.event_name}` : `${section === 'functions' ? 'Function' : 'Hotel'} order bottles supplied`,
+                owner_user_id: user!.id,
+              }),
+            { timeoutMs: 10000 }
+          );
           if (txErr) throw txErr;
 
           // Upsert mapping rows
@@ -388,9 +423,12 @@ const FunctionOrders = () => {
             bottle_type: b.bottle_type,
             owner_user_id: user!.id,
           }));
-          const { error: mapErr } = await supabase
-            .from('function_order_bottles')
-            .upsert(rows as any, { onConflict: 'order_id,bottle_id', ignoreDuplicates: true });
+          const { error: mapErr } = await withTimeoutRetry(
+            () => supabase
+              .from('function_order_bottles')
+              .upsert(rows as any, { onConflict: 'order_id,bottle_id', ignoreDuplicates: true }),
+            { timeoutMs: 10000 }
+          );
           if (mapErr) throw mapErr;
         }
       } else if (activeTab === 'receiving') {
@@ -402,30 +440,39 @@ const FunctionOrders = () => {
           const dict = new Map(withCustomer.map(b => [b.id, b] as const));
           const numbers = returnBottleIds.map(id => dict.get(id)?.bottle_number).filter(Boolean) as string[];
           // Mark returned
-          const { error: updErr } = await supabase
-            .from('bottles')
-            .update({ current_customer_id: null, is_returned: true })
-            .in('id', returnBottleIds);
+          const { error: updErr } = await withTimeoutRetry(
+            () => supabase
+              .from('bottles')
+              .update({ current_customer_id: null, is_returned: true })
+              .in('id', returnBottleIds),
+            { timeoutMs: 10000 }
+          );
           if (updErr) throw updErr;
           // Mark mapping rows as received
-          const { error: mapErr } = await supabase
-            .from('function_order_bottles')
-            .update({ received: true, received_at: new Date().toISOString() })
-            .in('bottle_id', returnBottleIds)
-            .eq('order_id', order.id);
+          const { error: mapErr } = await withTimeoutRetry(
+            () => supabase
+              .from('function_order_bottles')
+              .update({ received: true, received_at: new Date().toISOString() })
+              .in('bottle_id', returnBottleIds)
+              .eq('order_id', order.id),
+            { timeoutMs: 10000 }
+          );
           if (mapErr) throw mapErr;
           // Insert return transaction
-          const { error: txErr } = await supabase
-            .from('transactions')
-            .insert({
-              customer_id: order.customer_id,
-              transaction_type: 'return',
-              quantity: numbers.length,
-              bottle_numbers: numbers,
-              transaction_date: new Date().toISOString(),
-              notes: order.event_name ? `Function return: ${order.event_name}` : 'Function order bottles returned',
-              owner_user_id: user!.id,
-            });
+          const { error: txErr } = await withTimeoutRetry(
+            () => supabase
+              .from('transactions')
+              .insert({
+                customer_id: order.customer_id,
+                transaction_type: 'return',
+                quantity: numbers.length,
+                bottle_numbers: numbers,
+                transaction_date: new Date().toISOString(),
+                notes: order.event_name ? `${section === 'functions' ? 'Function' : 'Hotel'} return: ${order.event_name}` : `${section === 'functions' ? 'Function' : 'Hotel'} order bottles returned`,
+                owner_user_id: user!.id,
+              }),
+            { timeoutMs: 10000 }
+          );
           if (txErr) throw txErr;
           bottlesReturnedInc = numbers.length;
         }
@@ -433,16 +480,19 @@ const FunctionOrders = () => {
         const addPaid = receivePaid ? parseFloat(receivePaid) || 0 : 0;
         if (addPaid > 0) {
           // Insert payment transaction
-          const { error: payErr } = await supabase
-            .from('transactions')
-            .insert({
-              customer_id: order.customer_id,
-              transaction_type: 'payment',
-              amount: addPaid,
-              transaction_date: new Date().toISOString(),
-              notes: order.event_name ? `Function payment: ${order.event_name}` : 'Function order payment',
-              owner_user_id: user!.id,
-            });
+          const { error: payErr } = await withTimeoutRetry(
+            () => supabase
+              .from('transactions')
+              .insert({
+                customer_id: order.customer_id,
+                transaction_type: 'payment',
+                amount: addPaid,
+                transaction_date: new Date().toISOString(),
+                notes: order.event_name ? `${section === 'functions' ? 'Function' : 'Hotel'} payment: ${order.event_name}` : `${section === 'functions' ? 'Function' : 'Hotel'} order payment`,
+                owner_user_id: user!.id,
+              }),
+            { timeoutMs: 10000 }
+          );
           if (payErr) throw payErr;
         }
 
@@ -457,14 +507,17 @@ const FunctionOrders = () => {
           toast({ variant: 'destructive', title: 'Cannot clear', description: 'All bottles must be returned and balance must be zero to clear.' });
         }
 
-        const { error: updOrderErr } = await supabase
-          .from('function_orders')
-          .update({
-            bottles_returned: updatedReturned,
-            amount_paid: updatedPaid,
-            is_settled: wantClear && mayClear ? true : order.is_settled,
-          })
-          .eq('id', order.id);
+        const { error: updOrderErr } = await withTimeoutRetry(
+          () => supabase
+            .from('function_orders')
+            .update({
+              bottles_returned: updatedReturned,
+              amount_paid: updatedPaid,
+              is_settled: wantClear && mayClear ? true : order.is_settled,
+            })
+            .eq('id', order.id),
+          { timeoutMs: 10000 }
+        );
         if (updOrderErr) throw updOrderErr;
 
         toast({ title: 'Saved', description: `Received ${bottlesReturnedInc} bottle(s), payment ₹${(receivePaid||'0')}` });
@@ -476,25 +529,31 @@ const FunctionOrders = () => {
         const bottleNumbers = selected.map((b) => b.bottle_number);
 
         // Update bottles as out and assign to the customer
-        const { error: updErr } = await supabase
-          .from('bottles')
-          .update({ current_customer_id: orderData.customer_id, is_returned: false })
-          .in('id', selectedBottleIds);
+        const { error: updErr } = await withTimeoutRetry(
+          () => supabase
+            .from('bottles')
+            .update({ current_customer_id: orderData.customer_id, is_returned: false })
+            .in('id', selectedBottleIds),
+          { timeoutMs: 10000 }
+        );
         if (updErr) throw updErr;
 
         // Create a delivery transaction mapped to these bottle numbers
-        const { error: txErr } = await supabase
-          .from('transactions')
-          .insert({
-            customer_id: orderData.customer_id,
-            transaction_type: 'delivery',
-            quantity: bottleNumbers.length,
-            bottle_numbers: bottleNumbers,
-            amount: finalTotal,
-            transaction_date: new Date().toISOString(),
-            notes: orderData.event_name ? `Function: ${orderData.event_name}` : 'Function order bottles supplied',
-            owner_user_id: user!.id,
-          });
+        const { error: txErr } = await withTimeoutRetry(
+          () => supabase
+            .from('transactions')
+            .insert({
+              customer_id: orderData.customer_id,
+              transaction_type: 'delivery',
+              quantity: bottleNumbers.length,
+              bottle_numbers: bottleNumbers,
+              amount: finalTotal,
+              transaction_date: new Date().toISOString(),
+              notes: orderData.event_name ? `${section === 'functions' ? 'Function' : 'Hotel'}: ${orderData.event_name}` : `${section === 'functions' ? 'Function' : 'Hotel'} order bottles supplied`,
+              owner_user_id: user!.id,
+            }),
+          { timeoutMs: 10000 }
+        );
         if (txErr) throw txErr;
 
         // Insert mapping rows to function_order_bottles for this order
@@ -506,16 +565,25 @@ const FunctionOrders = () => {
             bottle_type: b.bottle_type,
             owner_user_id: user!.id,
           }));
-          const { error: mapInsErr } = await supabase
-            .from('function_order_bottles')
-            .upsert(rows as any, { onConflict: 'order_id,bottle_id', ignoreDuplicates: true });
+          const { error: mapInsErr } = await withTimeoutRetry(
+            () => supabase
+              .from('function_order_bottles')
+              .upsert(rows as any, { onConflict: 'order_id,bottle_id', ignoreDuplicates: true }),
+            { timeoutMs: 10000 }
+          );
           if (mapInsErr) throw mapInsErr;
         }
 
         // Update customer balance by calcTotal
-        const { data: custRow } = await supabase.from('customers').select('id, balance').eq('id', orderData.customer_id).single();
+        const { data: custRow } = await withTimeoutRetry(
+          () => supabase.from('customers').select('id, balance').eq('id', orderData.customer_id).single(),
+          { timeoutMs: 10000 }
+        );
         if (custRow) {
-          await supabase.from('customers').update({ balance: (custRow.balance || 0) + finalTotal }).eq('id', orderData.customer_id);
+          await withTimeoutRetry(
+            () => supabase.from('customers').update({ balance: (custRow.balance || 0) + finalTotal }).eq('id', orderData.customer_id),
+            { timeoutMs: 10000 }
+          );
         }
       }
 
@@ -532,6 +600,8 @@ const FunctionOrders = () => {
         title: "Error",
         description: error.message
       });
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -545,20 +615,20 @@ const FunctionOrders = () => {
   };
 
   const handleDelete = async (orderId: string) => {
-    if (!confirm('Are you sure you want to delete this function order?')) return;
+    if (!confirm(`Are you sure you want to delete this ${section === 'functions' ? 'function' : 'hotel'} order?`)) return;
     
     try {
-      const { error } = await supabase
-        .from('function_orders')
-        .delete()
-        .eq('id', orderId);
+      const { error } = await withTimeoutRetry(
+        () => supabase
+          .from('function_orders')
+          .delete()
+          .eq('id', orderId),
+        { timeoutMs: 10000 }
+      );
       
       if (error) throw error;
       
-      toast({
-        title: "Success",
-        description: "Function order deleted successfully"
-      });
+      toast({ title: 'Success', description: `${section === 'functions' ? 'Function' : 'Hotel'} order deleted successfully` });
       
       fetchData();
     } catch (error: any) {
@@ -574,10 +644,13 @@ const FunctionOrders = () => {
     try {
       // If currently settled and clicking to mark pending, allow directly
       if (currentStatus) {
-        const { error } = await supabase
-          .from('function_orders')
-          .update({ is_settled: false })
-          .eq('id', orderId);
+        const { error } = await withTimeoutRetry(
+          () => supabase
+            .from('function_orders')
+            .update({ is_settled: false })
+            .eq('id', orderId),
+          { timeoutMs: 10000 }
+        );
         if (error) throw error;
         toast({ title: 'Success', description: 'Order marked as pending' });
         fetchData();
@@ -585,11 +658,14 @@ const FunctionOrders = () => {
       }
 
       // Otherwise, attempting to mark settled: enforce rules
-      const { data: ord, error: getErr } = await supabase
-        .from('function_orders')
-        .select('id, bottles_supplied, bottles_returned, total_amount, amount_paid')
-        .eq('id', orderId)
-        .single();
+      const { data: ord, error: getErr } = await withTimeoutRetry(
+        () => supabase
+          .from('function_orders')
+          .select('id, bottles_supplied, bottles_returned, total_amount, amount_paid')
+          .eq('id', orderId)
+          .single(),
+        { timeoutMs: 10000 }
+      );
       if (getErr) throw getErr;
 
       const supplied = (ord?.bottles_supplied || 0) as number;
@@ -610,10 +686,13 @@ const FunctionOrders = () => {
         return;
       }
 
-      const { error } = await supabase
-        .from('function_orders')
-        .update({ is_settled: true })
-        .eq('id', orderId);
+      const { error } = await withTimeoutRetry(
+        () => supabase
+          .from('function_orders')
+          .update({ is_settled: true })
+          .eq('id', orderId),
+        { timeoutMs: 10000 }
+      );
       if (error) throw error;
 
       toast({ title: 'Success', description: 'Order marked as settled' });
@@ -655,23 +734,34 @@ const FunctionOrders = () => {
     <div className="space-y-6">
       <div className="flex justify-between items-center">
         <div>
-          <h1 className="text-3xl font-bold">Function Orders</h1>
+          <h1 className="text-3xl font-bold">Events</h1>
+          <div className="mt-2">
+            <SegmentedToggle
+              size="sm"
+              value={section}
+              onChange={(v) => setSection(v as 'functions' | 'hotels')}
+              options={[
+                { value: 'functions', label: 'Functions' },
+                { value: 'hotels', label: 'Hotels' },
+              ]}
+            />
+          </div>
         </div>
         
         <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
           <DialogTrigger asChild>
             <Button onClick={() => setEditingOrder(null)}>
               <Plus className="h-4 w-4 mr-2" />
-              Add Function Order
+              {section === 'functions' ? 'Add Function Order' : 'Add Hotel Order'}
             </Button>
           </DialogTrigger>
           <DialogContent className="max-w-2xl max-h-[85vh] overflow-auto">
             <DialogHeader>
               <DialogTitle>
-                {editingOrder ? 'Edit Function Order' : 'Add New Function Order'}
+                {editingOrder ? (section === 'functions' ? 'Edit Function Order' : 'Edit Hotel Order') : (section === 'functions' ? 'Add New Function Order' : 'Add New Hotel Order')}
               </DialogTitle>
               <DialogDescription>
-                {editingOrder ? 'Update function order details' : 'Create a new function order'}
+                {editingOrder ? `Update ${section === 'functions' ? 'function' : 'hotel'} order details` : `Create a new ${section === 'functions' ? 'function' : 'hotel'} order`}
               </DialogDescription>
             </DialogHeader>
             
@@ -715,9 +805,45 @@ const FunctionOrders = () => {
                   </div>
                 ) : (
                   <div className="space-y-2">
-                    <Label>Function Customer</Label>
-                    <Input className="bg-white" placeholder="Function name (required)" value={newFuncName} onChange={(e) => setNewFuncName(e.target.value)} required />
-                    <Input className="bg-white" placeholder="Phone (optional)" value={newFuncPhone} onChange={(e) => setNewFuncPhone(e.target.value)} />
+                    <Label>{section === 'functions' ? 'Function' : 'Hotel'} Customer</Label>
+                    <div className="relative">
+                      <Input
+                        className="bg-white"
+                        placeholder={`${section === 'functions' ? 'Function' : 'Hotel'} name (required)`}
+                        value={newFuncName}
+                        onFocus={() => setCustomerSearchOpen(true)}
+                        onChange={(e) => {
+                          setNewFuncName(e.target.value);
+                          setCustomerSearchOpen(true);
+                          if (existingCustomerId) setExistingCustomerId(null);
+                        }}
+                        onBlur={() => setTimeout(() => setCustomerSearchOpen(false), 150)}
+                        required={!existingCustomerId}
+                      />
+                      {customerSearchOpen && customers.length > 0 && (
+                        <div className="absolute z-50 mt-1 w-full max-h-56 overflow-auto border rounded-md bg-white shadow">
+                          {(customers.filter(c => c.name.toLowerCase().includes(newFuncName.trim().toLowerCase())).slice(0,50)).map((c) => (
+                            <button
+                              key={c.id}
+                              type="button"
+                              onMouseDown={(e) => e.preventDefault()}
+                              onClick={() => { setExistingCustomerId(c.id); setNewFuncName(c.name); setCustomerSearchOpen(false); }}
+                              className={`w-full text-left px-3 py-2 hover:bg-gray-100 ${existingCustomerId === c.id ? 'bg-gray-50' : ''}`}
+                            >
+                              {c.name} ({c.pin})
+                            </button>
+                          ))}
+                          {customers.filter(c => c.name.toLowerCase().includes(newFuncName.trim().toLowerCase())).length === 0 && (
+                            <div className="px-3 py-2 text-sm text-muted-foreground">No matches. A new customer will be created.</div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                    {existingCustomerId ? (
+                      <div className="text-xs text-green-700">Existing customer selected. A new customer will not be created. <button type="button" className="underline" onClick={() => setExistingCustomerId(null)}>Clear</button></div>
+                    ) : (
+                      <Input className="bg-white" placeholder="Phone (optional)" value={newFuncPhone} onChange={(e) => setNewFuncPhone(e.target.value)} />
+                    )}
                   </div>
                 )}
                 <div>
@@ -734,12 +860,12 @@ const FunctionOrders = () => {
               
               {(!editingOrder || activeTab === 'giving') && (
               <div>
-                <Label htmlFor="event_name">Event Name</Label>
+                <Label htmlFor="event_name">{section === 'functions' ? 'Event Name' : 'Hotel Name'}</Label>
                 <Input
                   id="event_name"
                   name="event_name"
                   defaultValue={editingOrder?.event_name || ''}
-                  placeholder="Wedding, Birthday, Corporate Event, etc."
+                  placeholder={section === 'functions' ? 'Wedding, Birthday, Corporate Event, etc.' : 'Hotel name, booking ref, etc.'}
                   className="bg-white"
                 />
               </div>
@@ -888,9 +1014,9 @@ const FunctionOrders = () => {
                     type="number"
                     min="0"
                     step="0.01"
-                    value={(overrideTotal !== '' ? overrideTotal : String(autoTotal))}
+                    value={overrideTotal}
                     onChange={(e) => setOverrideTotal(e.target.value)}
-                    placeholder="Auto from bottles; editable"
+                    placeholder={String(autoTotal)}
                     className="bg-white"
                   />
                   <div className="text-xs text-muted-foreground mt-1">Default: auto from selected bottles. You can edit this value.</div>

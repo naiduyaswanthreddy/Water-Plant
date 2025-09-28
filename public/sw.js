@@ -1,4 +1,4 @@
-const VERSION = 'v2';
+const VERSION = 'v3';
 const CACHE_NAME = `bb-shell-${VERSION}`;
 const ASSET_CACHE = `bb-assets-${VERSION}`;
 const API_CACHE = `bb-api-${VERSION}`;
@@ -16,7 +16,11 @@ self.addEventListener('install', (event) => {
   event.waitUntil(
     Promise.all([
       caches.open(CACHE_NAME).then((cache) => cache.addAll(CORE_ASSETS)),
-      self.skipWaiting()
+      self.skipWaiting(),
+      // Enable navigation preload (faster navigations when SW is controlling)
+      ('navigationPreload' in self.registration)
+        ? self.registration.navigationPreload.enable()
+        : Promise.resolve()
     ])
   );
 });
@@ -37,10 +41,25 @@ self.addEventListener('activate', (event) => {
   );
 });
 
+self.addEventListener('message', (event) => {
+  if (!event.data) return;
+  if (event.data.type === 'SKIP_WAITING') {
+    self.skipWaiting();
+  }
+});
+
+// Utility: fetch with timeout
+const fetchWithTimeout = (request, { timeoutMs = 8000 } = {}) => {
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), timeoutMs);
+  return fetch(request, { signal: controller.signal })
+    .finally(() => clearTimeout(id));
+};
+
 // Strategy:
 // - HTML (navigation): network-first, fallback to cached shell
 // - Static assets (same-origin): cache-first, populate ASSET_CACHE
-// - API GET (supabase/rest): stale-while-revalidate into API_CACHE
+// - API GET (supabase/rest): network-first with timeout, fallback to cache (kept fresh)
 self.addEventListener('fetch', (event) => {
   const req = event.request;
   const url = new URL(req.url);
@@ -51,13 +70,23 @@ self.addEventListener('fetch', (event) => {
   // Navigation requests (documents)
   if (req.mode === 'navigate' || (req.headers.get('accept') || '').includes('text/html')) {
     event.respondWith(
-      fetch(req)
-        .then((res) => {
-          const resClone = res.clone();
+      (async () => {
+        try {
+          // Prefer navigation preload if available
+          const preload = await event.preloadResponse;
+          if (preload) {
+            const resClone = preload.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(OFFLINE_URL, resClone));
+            return preload;
+          }
+          const net = await fetchWithTimeout(req, { timeoutMs: 8000 });
+          const resClone = net.clone();
           caches.open(CACHE_NAME).then((cache) => cache.put(OFFLINE_URL, resClone));
-          return res;
-        })
-        .catch(() => caches.match(OFFLINE_URL))
+          return net;
+        } catch (e) {
+          return caches.match(OFFLINE_URL);
+        }
+      })()
     );
     return;
   }
@@ -68,14 +97,16 @@ self.addEventListener('fetch', (event) => {
     event.respondWith(
       caches.open(API_CACHE).then(async (cache) => {
         const cached = await cache.match(req);
-        const networkFetch = fetch(req)
-          .then((res) => {
-            if (res.ok) cache.put(req, res.clone());
-            return res;
-          })
-          .catch(() => cached || Response.error());
-        // Stale-while-revalidate
-        return cached || networkFetch;
+        try {
+          const net = await fetchWithTimeout(req, { timeoutMs: 7000 });
+          if (net && net.ok) cache.put(req, net.clone());
+          return net;
+        } catch (e) {
+          // Fallback to cache if offline/timeout
+          if (cached) return cached;
+          // As last resort, error
+          return Response.error();
+        }
       })
     );
     return;

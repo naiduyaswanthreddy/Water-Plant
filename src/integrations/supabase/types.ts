@@ -376,7 +376,7 @@ export type Database = {
     }
     Enums: {
       bottle_type: "normal" | "cool"
-      customer_type: "household" | "shop" | "function"
+      customer_type: "household" | "shop" | "function" | "hotel"
       delivery_type: "daily" | "alternate" | "weekly"
       payment_type: "cash" | "online" | "credit"
       staff_role: "owner" | "delivery" | "counter"
@@ -509,7 +509,7 @@ export const Constants = {
   public: {
     Enums: {
       bottle_type: ["normal", "cool"],
-      customer_type: ["household", "shop", "function"],
+      customer_type: ["household", "shop", "function", "hotel"],
       delivery_type: ["daily", "alternate", "weekly"],
       payment_type: ["cash", "online", "credit"],
       staff_role: ["owner", "delivery", "counter"],

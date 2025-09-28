@@ -63,7 +63,8 @@ const App = () => (
       {/* Routes page removed */}
       <Route path="delivery" element={<Delivery />} />
       <Route path="transactions" element={<Transactions />} />
-      <Route path="function-orders" element={<FunctionOrders />} />
+      <Route path="events" element={<FunctionOrders />} />
+      <Route path="function-orders" element={<Navigate to="/events" replace />} />
       <Route path="shop" element={<Shop />} />
       <Route path="pricing" element={<Pricing />} />
       <Route path="counter" element={<div className="p-6">Counter Sales page - Coming soon</div>} />
