@@ -10,7 +10,7 @@ import { Badge } from '@/components/ui/badge';
 import { supabase } from '@/integrations/supabase/client';
 import { useLocation } from 'react-router-dom';
 import { useToast } from '@/hooks/use-toast';
-import { Plus, Search, Package, AlertCircle, Trash2 } from 'lucide-react';
+import { Plus, Search, Package, AlertCircle, Trash2, Snowflake, Droplet } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 
 interface Bottle {
@@ -664,24 +664,51 @@ const Bottles = () => {
       </div>
 
       {/* Bottles Grid */}
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+      <div className="grid gap-5 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
         {filteredBottles.map((bottle) => (
-          <Card key={bottle.id}>
+          <Card
+            key={bottle.id}
+            className={`${!bottle.is_returned ? 'border-red-200 ring-1 ring-red-100' : 'border-emerald-100'} ${
+              bottle.bottle_type === 'cool' ? 'bg-gradient-to-br from-sky-50/40 to-white' : 'bg-gradient-to-br from-emerald-50/30 to-white'
+            } relative overflow-hidden`}
+          >
+            {/* Top status bar */}
+            <div
+              className={`absolute inset-x-0 top-0 h-1 ${
+                !bottle.is_returned ? 'bg-red-400/80' : 'bg-emerald-400/80'
+              }`}
+            />
             <CardHeader className="pb-3">
               <div className="flex justify-between items-start">
-                <div>
-                  <CardTitle className="text-lg">{bottle.bottle_number}</CardTitle>
-                  <CardDescription>
-                    <Badge variant={bottle.bottle_type === 'cool' ? 'default' : 'secondary'}>
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    {bottle.bottle_type === 'cool' ? (
+                      <Snowflake className="h-4 w-4 text-sky-600" />
+                    ) : (
+                      <Droplet className="h-4 w-4 text-emerald-600" />
+                    )}
+                    <CardTitle className="text-xl tracking-tight">{bottle.bottle_number}</CardTitle>
+                  </div>
+                  <CardDescription className="flex items-center gap-2">
+                    <Badge variant={bottle.bottle_type === 'cool' ? 'default' : 'secondary'} className="capitalize">
                       {bottle.bottle_type}
                     </Badge>
+                    {!bottle.is_returned && getFunctionBadge(bottle.bottle_number) && (
+                      <Badge variant="secondary">{getFunctionBadge(bottle.bottle_number)}</Badge>
+                    )}
                   </CardDescription>
                 </div>
-                <div className="flex gap-2 items-center">
-                  {!bottle.is_returned && getFunctionBadge(bottle.bottle_number) && (
-                    <Badge variant="secondary">{getFunctionBadge(bottle.bottle_number)}</Badge>
-                  )}
-                  <Badge variant={bottle.is_returned ? 'secondary' : 'destructive'}>
+                <div className="flex items-center gap-2">
+                  <Badge
+                    variant={bottle.is_returned ? 'secondary' : 'destructive'}
+                    className="shrink-0"
+                    title={bottle.is_returned ? 'Bottle is in stock' : 'Bottle is out'}
+                  >
+                    <span
+                      className={`mr-2 inline-block h-2 w-2 rounded-full ${
+                        bottle.is_returned ? 'bg-emerald-500' : 'bg-red-500'
+                      }`}
+                    />
                     {bottle.is_returned ? 'In Stock' : 'Out'}
                   </Badge>
                   {bottle.is_returned && (
@@ -700,19 +727,21 @@ const Bottles = () => {
               </div>
             </CardHeader>
             <CardContent>
-              <div className="space-y-3">
+              <div className="space-y-4">
                 {bottle.customer && !bottle.is_returned && (
-                  <div>
-                    <p className="text-sm text-muted-foreground">With Customer:</p>
-                    <p className="font-medium">{bottle.customer.name}</p>
-                    <p className="text-sm">PIN: {bottle.customer.pin}</p>
+                  <div className="rounded-lg border bg-white/70 p-3">
+                    <p className="text-xs uppercase tracking-wide text-muted-foreground">With Customer</p>
+                    <div className="mt-1 flex items-center justify-between">
+                      <p className="font-medium">{bottle.customer.name}</p>
+                      <p className="text-sm text-muted-foreground">PIN: {bottle.customer.pin}</p>
+                    </div>
                   </div>
                 )}
-                
+
                 <div className="flex gap-2">
                   {bottle.is_returned ? (
                     <Select onValueChange={(customerId) => handleAssignBottle(bottle.id, customerId)}>
-                      <SelectTrigger>
+                      <SelectTrigger className="w-full">
                         <SelectValue placeholder="Assign to customer" />
                       </SelectTrigger>
                       <SelectContent>
@@ -736,16 +765,18 @@ const Bottles = () => {
                 </div>
 
                 {/* Notes editor */}
-                <div className="space-y-1">
+                <div className="space-y-1.5">
                   <Label htmlFor={`notes_${bottle.id}`}>Notes</Label>
                   <Input
                     id={`notes_${bottle.id}`}
                     value={notesDraft[bottle.id] ?? ''}
-                    onChange={(e) => setNotesDraft(prev => ({ ...prev, [bottle.id]: e.target.value }))}
+                    onChange={(e) => setNotesDraft((prev) => ({ ...prev, [bottle.id]: e.target.value }))}
                     placeholder="Add remarks for this bottle"
                   />
                   <div className="flex justify-end">
-                    <Button variant="secondary" size="sm" onClick={() => handleSaveNotes(bottle.id)}>Save</Button>
+                    <Button variant="secondary" size="sm" onClick={() => handleSaveNotes(bottle.id)}>
+                      Save
+                    </Button>
                   </div>
                 </div>
               </div>
@@ -753,7 +784,7 @@ const Bottles = () => {
             <CardContent>
               {/* Recent transactions per bottle */}
               <div>
-                <p className="text-sm text-muted-foreground">Recent activity:</p>
+                <p className="mb-1 text-sm text-muted-foreground">Recent activity</p>
                 {(() => {
                   const list = recentTxMap[bottle.bottle_number] || [];
                   if (list.length === 0) {
@@ -763,12 +794,12 @@ const Bottles = () => {
                   const visible = expanded ? list : list.slice(0, 1);
                   return (
                     <div className="space-y-1">
-                      <ul className="text-sm list-disc pl-5">
+                      <ul className="list-disc pl-5 text-sm text-foreground/90">
                         {visible.map((tx) => {
                           const person = tx.transaction_type === 'delivery' ? customerMap[tx.customer_id] : undefined;
                           return (
                             <li key={tx.id}>
-                              {tx.transaction_type} • {new Date(tx.transaction_date).toLocaleString()} {person ? `• ${person.name} (PIN: ${person.pin})` : ''} {tx.notes ? `• ${tx.notes}` : ''}
+                              <span className="capitalize">{tx.transaction_type}</span> • {new Date(tx.transaction_date).toLocaleString()} {person ? `• ${person.name} (PIN: ${person.pin})` : ''} {tx.notes ? `• ${tx.notes}` : ''}
                             </li>
                           );
                         })}
