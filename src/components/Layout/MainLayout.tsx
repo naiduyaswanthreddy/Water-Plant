@@ -2,6 +2,7 @@ import { Outlet, Link, useLocation } from 'react-router-dom';
 import { Sheet, SheetClose, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui/sheet';
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/hooks/useAuth';
+import Seo from '@/components/Seo';
 import { 
   Droplets,
   Users,
@@ -57,6 +58,12 @@ const MainLayout = () => {
 
   return (
     <div className="min-h-screen bg-background">
+      {/* Default SEO for layout with dynamic title */}
+      <Seo
+        title={navigation.find(n => n.href === location.pathname)?.name || 'App'}
+        description="Manage customers, bottles, orders, deliveries, pricing and transactions."
+        canonical={typeof window !== 'undefined' ? window.location.origin + location.pathname : undefined}
+      />
       <OfflineBanner />
       {/* No hamburger on mobile; access pages via bottom More menu */}
       <div className="hidden" />
@@ -76,7 +83,7 @@ const MainLayout = () => {
           </div>
 
           {/* Navigation */}
-          <nav className="flex-1 p-4">
+          <nav role="navigation" aria-label="Primary" className="flex-1 p-4">
             <ul className="space-y-2">
               {navigation.map((item) => {
                 const isActive = location.pathname === item.href;
@@ -119,13 +126,13 @@ const MainLayout = () => {
 
       {/* Main content */}
       <div className="lg:ml-64">
-        <main className="p-4 lg:p-6 pb-24 lg:pb-6">
+        <main id="main" role="main" className="p-4 lg:p-6 pb-24 lg:pb-6">
           <Outlet />
         </main>
       </div>
 
       {/* Bottom mobile nav with More menu */}
-      <nav className="lg:hidden fixed bottom-0 left-0 right-0 z-40 border-t bg-card/95 backdrop-blur supports-[backdrop-filter]:bg-card/75 pb-safe">
+      <nav role="navigation" aria-label="Bottom" className="lg:hidden fixed bottom-0 left-0 right-0 z-40 border-t bg-card/95 backdrop-blur supports-[backdrop-filter]:bg-card/75 pb-safe">
         <ul className="grid grid-cols-5">
           {bottomNav.map((item) => {
             const isActive = location.pathname.startsWith(item.href);

@@ -1,8 +1,9 @@
-const VERSION = 'v4';
+const VERSION = 'v5';
 const CACHE_NAME = `bb-shell-${VERSION}`;
 const ASSET_CACHE = `bb-assets-${VERSION}`;
 const API_CACHE = `bb-api-${VERSION}`;
 const OFFLINE_URL = '/';
+const OFFLINE_FALLBACK = '/offline.html';
 
 // IndexedDB keys
 const DB_NAME = 'bb-offline';
@@ -13,7 +14,8 @@ const CORE_ASSETS = [
   '/',
   '/index.html',
   '/manifest.webmanifest',
-  '/favicon.ico'
+  '/offline.html',
+  '/logo.png'
 ];
 
 self.addEventListener('install', (event) => {
@@ -28,6 +30,21 @@ self.addEventListener('install', (event) => {
     ])
   );
 });
+
+// Cache utils
+async function trimCache(cacheName, maxEntries = 100) {
+  try {
+    const cache = await caches.open(cacheName);
+    const keys = await cache.keys();
+    if (keys.length <= maxEntries) return;
+    const toDelete = keys.length - maxEntries;
+    for (let i = 0; i < toDelete; i++) {
+      await cache.delete(keys[i]);
+    }
+  } catch (_) {
+    // ignore
+  }
+}
 
 self.addEventListener('activate', (event) => {
   event.waitUntil(
@@ -96,6 +113,16 @@ const outboxDelete = async (id) => {
   });
 };
 
+const outboxUpdate = async (record) => {
+  const db = await openDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(OUTBOX_STORE, 'readwrite');
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+    tx.objectStore(OUTBOX_STORE).put(record);
+  });
+};
+
 // Utility: fetch with timeout
 const fetchWithTimeout = (request, { timeoutMs = 8000 } = {}) => {
   const controller = new AbortController();
@@ -125,13 +152,17 @@ self.addEventListener('fetch', (event) => {
           const body = await req.clone().text();
           const headers = {};
           req.headers.forEach((v, k) => { headers[k] = v; });
-          await outboxAdd({
+          const record = {
             createdAt: Date.now(),
             url: req.url,
             method: req.method,
             body,
             headers,
-          });
+          };
+          await outboxAdd(record);
+          // Notify clients that an action was queued
+          const clientsList = await self.clients.matchAll({ includeUncontrolled: true, type: 'window' });
+          clientsList.forEach((client) => client.postMessage({ type: 'queued-action', payload: { url: req.url, method: req.method } }));
           if ('sync' in self.registration) {
             try { await self.registration.sync.register('sync-api'); } catch {}
           }
@@ -165,7 +196,8 @@ self.addEventListener('fetch', (event) => {
           caches.open(CACHE_NAME).then((cache) => cache.put(OFFLINE_URL, resClone));
           return net;
         } catch (e) {
-          return caches.match(OFFLINE_URL);
+          // Serve dedicated offline fallback page
+          return caches.match(OFFLINE_FALLBACK);
         }
       })()
     );
@@ -176,15 +208,18 @@ self.addEventListener('fetch', (event) => {
   if (isSupabaseRest && req.method === 'GET') {
     event.respondWith(
       caches.open(API_CACHE).then(async (cache) => {
+        // Do not cache authorized responses to avoid leaking private data
+        const hasAuth = req.headers.get('authorization');
         const cached = await cache.match(req);
         try {
           const net = await fetchWithTimeout(req, { timeoutMs: 7000 });
-          if (net && net.ok) cache.put(req, net.clone());
+          if (!hasAuth && net && net.ok) {
+            cache.put(req, net.clone());
+            trimCache(API_CACHE, 200);
+          }
           return net;
         } catch (e) {
-          // Fallback to cache if offline/timeout
           if (cached) return cached;
-          // As last resort, error
           return Response.error();
         }
       })
@@ -192,17 +227,21 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Asset requests: cache-first for same-origin
+  // Asset requests: stale-while-revalidate for same-origin
   if (req.method === 'GET' && url.origin === self.location.origin) {
     event.respondWith(
-      caches.match(req).then((cached) => {
-        if (cached) return cached;
-        return fetch(req).then((res) => {
-          const resClone = res.clone();
-          caches.open(ASSET_CACHE).then((cache) => cache.put(req, resClone));
+      (async () => {
+        const cache = await caches.open(ASSET_CACHE);
+        const cached = await cache.match(req);
+        const fetchPromise = fetch(req).then(async (res) => {
+          if (res && res.ok) {
+            cache.put(req, res.clone());
+            trimCache(ASSET_CACHE, 300);
+          }
           return res;
-        });
-      })
+        }).catch(() => null);
+        return cached || fetchPromise || Response.error();
+      })()
     );
   }
 });
@@ -212,6 +251,13 @@ self.addEventListener('sync', (event) => {
   if (event.tag === 'sync-api') {
     event.waitUntil((async () => {
       const items = await outboxAll();
+      const delay = (ms) => new Promise((r) => setTimeout(r, ms));
+      const backoff = (n) => Math.min(30000, 1000 * Math.pow(2, n)); // up to 30s
+      const notify = async (message) => {
+        const clientsList = await self.clients.matchAll({ includeUncontrolled: true, type: 'window' });
+        clientsList.forEach((client) => client.postMessage(message));
+      };
+      await notify({ type: 'sync-start', payload: { total: items.length } });
       for (const item of items) {
         try {
           const res = await fetch(item.url, {
@@ -221,9 +267,17 @@ self.addEventListener('sync', (event) => {
           });
           if (res && res.ok) {
             await outboxDelete(item.id);
+            const remaining = (await outboxAll()).length;
+            await notify({ type: 'sync-progress', payload: { remaining } });
           }
-        } catch {}
+        } catch (e) {
+          // Increment retryCount and re-save for future sync
+          const retryCount = (item.retryCount || 0) + 1;
+          await delay(backoff(retryCount));
+          await outboxUpdate({ ...item, retryCount });
+        }
       }
+      await notify({ type: 'sync-complete' });
     })());
   }
 });

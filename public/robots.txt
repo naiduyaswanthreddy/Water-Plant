@@ -12,3 +12,6 @@ Allow: /
 
 User-agent: *
 Allow: /
+
+# Update your production domain below
+Sitemap: https://example.com/sitemap.xml

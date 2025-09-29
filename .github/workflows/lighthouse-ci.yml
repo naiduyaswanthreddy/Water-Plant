@@ -1,0 +1,43 @@
+name: Lighthouse CI
+
+on:
+  pull_request:
+  push:
+    branches: [ main, master ]
+
+jobs:
+  lhci:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install deps
+        run: npm install
+
+      - name: Build
+        run: npm run build
+
+      - name: Start preview server
+        run: npx vite preview --host 0.0.0.0 --port 4173 &
+
+      - name: Wait for server
+        uses: jakejarvis/wait-action@v0.1.1
+        with:
+          time: '10s'
+
+      - name: Run Lighthouse CI
+        uses: treosh/lighthouse-ci-action@v12
+        with:
+          urls: |
+            http://localhost:4173/
+            http://localhost:4173/customers
+            http://localhost:4173/delivery
+          configPath: .lighthouserc.json
+          uploadArtifacts: true
+          temporaryPublicStorage: true
