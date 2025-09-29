@@ -11,6 +11,7 @@ import InstallPrompt from "./components/InstallPrompt";
 import NetworkStatus from "./components/NetworkStatus";
 import SyncIndicator from "./components/SyncIndicator";
 import Analytics from "./components/Analytics";
+import { PageSkeleton } from "@/components/skeletons/PageSkeleton";
 import { AuthProvider, useAuth } from "@/hooks/useAuth";
 import MainLayout from "@/components/Layout/MainLayout";
 import PinGate from "@/components/PinGate";
@@ -75,7 +76,7 @@ const App = () => (
         <SyncIndicator />
         <Analytics />
         <BrowserRouter>
-          <Suspense fallback={<div className="p-6 text-sm opacity-70">Loading…</div>}>
+          <Suspense fallback={<div className="p-4 lg:p-6"><PageSkeleton /></div>}>
             <ReactRoutes>
               <Route path="/auth" element={<Auth />} />
               <Route path="/" element={
