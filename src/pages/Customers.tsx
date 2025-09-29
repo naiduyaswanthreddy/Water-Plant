@@ -221,7 +221,7 @@ const Customers = () => {
     let deliveries = 0;
     let payments = 0;
     for (const t of data || []) {
-      const amt = (t as any).amount || 0;
+      const amt = Number((t as any).amount) || 0;
       if ((t as any).transaction_type === 'delivery') deliveries += amt;
       if ((t as any).transaction_type === 'payment') payments += amt;
     }
@@ -237,7 +237,9 @@ const Customers = () => {
   const handleRecordPayment = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!activeCustomer) return;
-    const formData = new FormData(e.currentTarget);
+    // Capture the form element synchronously to avoid React synthetic event pooling issues
+    const formEl = e.currentTarget as HTMLFormElement;
+    const formData = new FormData(formEl);
     const amount = parseFloat(formData.get('amount') as string) || 0;
     const payment_type = (formData.get('payment_type') as 'cash' | 'online' | 'credit') || null;
     const notes = (formData.get('notes') as string) || null;
@@ -276,7 +278,8 @@ const Customers = () => {
         setActiveCustomer(fresh as any);
       }
       await fetchTransactions(activeCustomer.id);
-      (e.currentTarget as HTMLFormElement).reset();
+      // Reset using the captured reference (e.currentTarget may be null after awaits)
+      formEl?.reset();
     } catch (error: any) {
       toast({ variant: 'destructive', title: 'Error', description: error.message });
     }
@@ -420,7 +423,9 @@ const Customers = () => {
   };
 
   const getBalanceColor = (balance: number) => {
-    // Positive = credit (good), Negative = due (bad)
+    // Color by DISPLAYED sign (we show -balance):
+    // displayed < 0 (i.e., balance > 0) => green (you owe customer)
+    // displayed > 0 (i.e., balance < 0) => red (customer owes you)
     if (balance > 0) return 'text-green-600';
     if (balance < 0) return 'text-red-600';
     return 'text-gray-600';
@@ -615,10 +620,10 @@ const Customers = () => {
                 <div className="flex justify-between">
                   <span className="text-sm text-muted-foreground">Balance:</span>
                   <span className={`text-sm font-medium ${getBalanceColor(customer.balance)}`}>
-                    ₹{customer.balance.toFixed(2)}
+                    ₹{(-customer.balance).toFixed(2)}
                   </span>
                 </div>
-                
+
                 {customer.deposit_amount > 0 && (
                   <div className="flex justify-between">
                     <span className="text-sm text-muted-foreground">Deposit:</span>
@@ -652,7 +657,7 @@ const Customers = () => {
                     <div><span className="text-muted-foreground">Type:</span> {activeCustomer.customer_type}</div>
                     <div><span className="text-muted-foreground">Delivery:</span> {activeCustomer.delivery_type}</div>
                     <div><span className="text-muted-foreground">Deposit:</span> ₹{(activeCustomer.deposit_amount || 0).toFixed(2)}</div>
-                    <div><span className="text-muted-foreground">Balance:</span> <span className="font-medium">₹{(activeCustomer.balance || 0).toFixed(2)}</span></div>
+                    <div><span className="text-muted-foreground">Balance:</span> <span className="font-medium">₹{(-(activeCustomer.balance || 0)).toFixed(2)}</span></div>
                   </CardContent>
                 </Card>
 

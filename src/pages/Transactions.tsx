@@ -222,7 +222,8 @@ const Transactions = () => {
       if ((t as any).transaction_type === 'delivery') deliveries += amt;
       if ((t as any).transaction_type === 'payment') payments += amt;
     }
-    const balance = deliveries - payments;
+    // Convention: store balance as payments - deliveries (positive = credit)
+    const balance = payments - deliveries;
     const { error: updErr } = await supabase
       .from('customers')
       .update({ balance })
@@ -230,8 +231,10 @@ const Transactions = () => {
     if (updErr) throw updErr;
   };
 
-  // Check if a transaction can be deleted (within 24 hours of creation)
+  // Respect Settings toggle for 24h deletion limit
   const canDeleteTransaction = (tx: Transaction): boolean => {
+    const limitOn = localStorage.getItem('settings.tx_delete_limit_24h') === 'true';
+    if (!limitOn) return true;
     try {
       const created = new Date(tx.created_at || tx.transaction_date);
       const diff = Date.now() - created.getTime();

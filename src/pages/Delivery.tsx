@@ -86,7 +86,7 @@ const Delivery = () => {
     let deliveries = 0;
     let payments = 0;
     for (const t of data || []) {
-      const amt = (t as any).amount || 0;
+      const amt = Number((t as any).amount) || 0;
       if ((t as any).transaction_type === 'delivery') deliveries += amt;
       if ((t as any).transaction_type === 'payment') payments += amt;
     }
@@ -651,8 +651,18 @@ const Delivery = () => {
                     PIN: {customer.pin} {customer.phone ? `• ${customer.phone}` : ''}
                   </CardDescription>
                 </div>
-                <Badge variant="secondary" className="bg-gray-100 text-gray-800">
-                  Balance: ₹{(customer.balance || 0).toFixed(2)}
+                <Badge
+                  variant="secondary"
+                  className={
+                    `bg-gray-100 ` +
+                    ((customer.balance || 0) > 0
+                      ? 'text-green-600' // displayed is negative => you owe customer
+                      : (customer.balance || 0) < 0
+                        ? 'text-red-600'   // displayed is positive => customer owes you
+                        : 'text-gray-800')
+                  }
+                >
+                  Balance: ₹{(-((customer.balance || 0))).toFixed(2)}
                 </Badge>
               </div>
             </CardHeader>

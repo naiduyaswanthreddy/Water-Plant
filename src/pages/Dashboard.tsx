@@ -158,7 +158,7 @@ const Dashboard = () => {
     },
     {
       title: 'Pending Balance',
-      value: `₹${stats.pendingBalance.toFixed(2)}`,
+      value: `₹${(-stats.pendingBalance).toFixed(2)}`,
       icon: DollarSign,
       description: 'Outstanding payments',
       color: 'text-yellow-600'

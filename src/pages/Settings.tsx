@@ -9,11 +9,12 @@ import { usePin } from '@/hooks/usePin';
 import { useAuth } from '@/hooks/useAuth';
 import { useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
+import { SegmentedToggle } from '@/components/ui/segmented-toggle';
 
 const LS_KEYS = {
   COMPANY_NAME: 'settings.company_name',
   COMPANY_ADDRESS: 'settings.company_address',
-  
+  TX_DELETE_LIMIT_24H: 'settings.tx_delete_limit_24h',
 };
 
 const Settings = () => {
@@ -28,11 +29,18 @@ const Settings = () => {
   const [newPin, setNewPin] = useState('');
   const [confirmPin, setConfirmPin] = useState('');
   const [currentPin, setCurrentPin] = useState('');
+  const [txLimit24h, setTxLimit24h] = useState<boolean>(false);
 
   useEffect(() => {
     setCompanyName(localStorage.getItem(LS_KEYS.COMPANY_NAME) || '');
     setCompanyAddress(localStorage.getItem(LS_KEYS.COMPANY_ADDRESS) || '');
-    
+    const stored = localStorage.getItem(LS_KEYS.TX_DELETE_LIMIT_24H);
+    if (stored === null) {
+      localStorage.setItem(LS_KEYS.TX_DELETE_LIMIT_24H, 'true');
+      setTxLimit24h(true);
+    } else {
+      setTxLimit24h(stored === 'true');
+    }
   }, []);
 
   const saveCompany = () => {
@@ -97,6 +105,34 @@ const Settings = () => {
               <Input id="company_address" value={companyAddress} onChange={(e) => setCompanyAddress(e.target.value)} />
             </div>
             <Button onClick={saveCompany}>Save</Button>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base">Transactions</CardTitle>
+            <CardDescription>Control deletion time limit for transactions</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div>
+              <Label className="mb-1 block">Deletion Window</Label>
+              <SegmentedToggle
+                size="sm"
+                value={txLimit24h ? 'limit' : 'off'}
+                onChange={(v) => {
+                  const on = v === 'limit';
+                  setTxLimit24h(on);
+                  localStorage.setItem(LS_KEYS.TX_DELETE_LIMIT_24H, on ? 'true' : 'false');
+                  toast({ title: 'Saved', description: on ? '24-hour deletion limit enabled' : 'Deletion allowed anytime' });
+                }}
+                options={[
+                  { value: 'off', label: 'No Limit' },
+                  { value: 'limit', label: '24h Limit' },
+                ]}
+              />
+              <div className="text-xs text-muted-foreground mt-1">
+                When enabled, only transactions created within the last 24 hours can be deleted.
+              </div>
+            </div>
           </CardContent>
         </Card>
       </div>

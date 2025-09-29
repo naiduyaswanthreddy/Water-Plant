@@ -1124,8 +1124,8 @@ const FunctionOrders = () => {
                   </div>
                   <div className="flex justify-between text-sm">
                     <span className="text-muted-foreground">Balance:</span>
-                    <span className={`font-medium ${getBalanceAmount(order) > 0 ? 'text-red-600' : 'text-green-600'}`}>
-                      ₹{getBalanceAmount(order).toFixed(2)}
+                    <span className={`font-medium ${getBalanceAmount(order) > 0 ? 'text-green-600' : 'text-red-600'}`}>
+                      ₹{(-getBalanceAmount(order)).toFixed(2)}
                     </span>
                   </div>
                 </div>
