@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import { usePin } from '@/hooks/usePin';
+import { useAuth } from '@/hooks/useAuth';
 
 const LS_KEYS = {
   COMPANY_NAME: 'settings.company_name',
@@ -19,6 +20,7 @@ const Settings = () => {
   const [exporting, setExporting] = useState(false);
   const { toast } = useToast();
   const { hasPin, setPin, clearPin, verifyPin } = usePin();
+  const { signOut } = useAuth();
   const [newPin, setNewPin] = useState('');
   const [confirmPin, setConfirmPin] = useState('');
   const [currentPin, setCurrentPin] = useState('');
@@ -196,6 +198,28 @@ const Settings = () => {
               Claim Data
             </Button>
           </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base">Account</CardTitle>
+          <CardDescription>Manage your session</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <Button
+            variant="destructive"
+            onClick={async () => {
+              try {
+                await signOut();
+                toast({ title: 'Signed out', description: 'You have been logged out.' });
+              } catch (err: any) {
+                toast({ variant: 'destructive', title: 'Error', description: err?.message || 'Failed to sign out' });
+              }
+            }}
+          >
+            Sign Out
+          </Button>
         </CardContent>
       </Card>
     </div>
