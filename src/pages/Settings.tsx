@@ -215,10 +215,11 @@ const Settings = () => {
             variant="destructive"
             onClick={async () => {
               try {
-                await signOut();
-                // Clear client caches/state and redirect to Auth screen
-                try { await queryClient.clear(); } catch {}
+                // Redirect first so user lands on login immediately
                 navigate('/auth', { replace: true });
+                // Then perform sign out and cleanup in background
+                await signOut();
+                try { await queryClient.clear(); } catch {}
                 toast({ title: 'Signed out', description: 'You have been logged out.' });
               } catch (err: any) {
                 toast({ variant: 'destructive', title: 'Error', description: err?.message || 'Failed to sign out' });
