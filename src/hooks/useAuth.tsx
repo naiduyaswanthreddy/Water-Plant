@@ -107,6 +107,10 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
         title: "Sign out failed",
         description: error.message
       });
+    } else {
+      // Proactively clear local state; auth listener will confirm
+      setSession(null);
+      setUser(null);
     }
   };
 

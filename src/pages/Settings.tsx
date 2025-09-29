@@ -7,6 +7,8 @@ import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import { usePin } from '@/hooks/usePin';
 import { useAuth } from '@/hooks/useAuth';
+import { useNavigate } from 'react-router-dom';
+import { useQueryClient } from '@tanstack/react-query';
 
 const LS_KEYS = {
   COMPANY_NAME: 'settings.company_name',
@@ -21,6 +23,8 @@ const Settings = () => {
   const { toast } = useToast();
   const { hasPin, setPin, clearPin, verifyPin } = usePin();
   const { signOut } = useAuth();
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [newPin, setNewPin] = useState('');
   const [confirmPin, setConfirmPin] = useState('');
   const [currentPin, setCurrentPin] = useState('');
@@ -212,6 +216,9 @@ const Settings = () => {
             onClick={async () => {
               try {
                 await signOut();
+                // Clear client caches/state and redirect to Auth screen
+                try { await queryClient.clear(); } catch {}
+                navigate('/auth', { replace: true });
                 toast({ title: 'Signed out', description: 'You have been logged out.' });
               } catch (err: any) {
                 toast({ variant: 'destructive', title: 'Error', description: err?.message || 'Failed to sign out' });
