@@ -4,11 +4,8 @@
   Permissions-Policy: geolocation=(), microphone=(), camera=(), payment=()
   X-Frame-Options: DENY
 
-  # Content Security Policy: adjust connect-src/img-src/script-src as needed.
-  Content-Security-Policy: default-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; object-src 'none';
-    connect-src 'self' https://poafavaegepvipnsvznf.supabase.co https://poafavaegepvipnsvznf.supabase.co/ws;
-    img-src 'self' data: blob: https://poafavaegepvipnsvznf.supabase.co;
-    script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' data:;
+  # Content Security Policy: single line. Update sources if you enable analytics/CDN scripts.
+  Content-Security-Policy: default-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; object-src 'none'; connect-src 'self' https://*.supabase.co wss://*.supabase.co https://*.netlify.app; img-src 'self' data: blob: https://*.supabase.co; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' data:;
 
   # Enforce HTTPS (only if site is served over HTTPS). Set at CDN/load balancer ideally.
   Strict-Transport-Security: max-age=31536000; includeSubDomains; preload
