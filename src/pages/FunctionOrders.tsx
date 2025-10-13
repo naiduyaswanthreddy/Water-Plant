@@ -14,6 +14,7 @@ import { useToast } from '@/hooks/use-toast';
 import { Plus, Search, Edit, Trash2, Calendar, Users, CheckCircle, Clock } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { withTimeoutRetry } from '@/lib/supaRequest';
+import { parseLocalInputToUTC, formatLocalInput } from '@/lib/datetime';
 
 interface FunctionOrder {
   id: string;
@@ -330,10 +331,13 @@ const FunctionOrders = () => {
 
     const finalTotal = overrideTotal ? parseFloat(overrideTotal) || 0 : calcTotal;
 
+    const eventDateInput = (formData.get('event_date') as string) || '';
+    // If event_date is a date-only input (YYYY-MM-DD), coerce to local midnight then to UTC ISO
+    const eventDateISO = eventDateInput ? parseLocalInputToUTC(`${eventDateInput}T00:00`) : null;
     const orderData = {
       customer_id: customer_id as string,
       event_name: formData.get('event_name') as string || null,
-      event_date: formData.get('event_date') as string || null,
+      event_date: eventDateISO,
       bottles_supplied: selectedBottleIds.length, // enforce supplied equals selected
       bottles_returned: parseInt(formData.get('bottles_returned') as string) || 0,
       total_amount: finalTotal,

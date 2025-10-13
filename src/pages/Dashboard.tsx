@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
+import { startOfLocalDayISO, startOfNextLocalDayISO } from '@/lib/datetime';
 
 interface DashboardStats {
   totalCustomers: number;
@@ -79,14 +80,16 @@ const Dashboard = () => {
         .eq('owner_user_id', user!.id)
         .eq('is_returned', false);
 
-      // Get today's deliveries
-      const today = new Date().toISOString().split('T')[0];
+      // Get today's deliveries using local day boundaries
+      const todayStartISO = startOfLocalDayISO();
+      const nextDayStartISO = startOfNextLocalDayISO();
       const { count: deliveryCount } = await supabase
         .from('transactions')
         .select('id', { count: 'exact', head: true })
         .eq('transaction_type', 'delivery')
         .eq('owner_user_id', user!.id)
-        .gte('transaction_date', today);
+        .gte('transaction_date', todayStartISO)
+        .lt('transaction_date', nextDayStartISO);
 
       // Get pending balances
       const { data: balanceData } = await supabase
@@ -108,13 +111,14 @@ const Dashboard = () => {
         .eq('is_returned', false)
         .lt('created_at', weekAgo.toISOString());
 
-      // Get today's revenue
+      // Get today's revenue using local day boundaries
       const { data: revenueData } = await supabase
         .from('transactions')
         .select('amount')
         .eq('transaction_type', 'payment')
         .eq('owner_user_id', user!.id)
-        .gte('transaction_date', today);
+        .gte('transaction_date', todayStartISO)
+        .lt('transaction_date', nextDayStartISO);
 
       const todayRevenue = revenueData?.reduce((sum, transaction) => 
         sum + (parseFloat(transaction.amount?.toString() || '0')), 0) || 0;

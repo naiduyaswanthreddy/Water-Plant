@@ -11,6 +11,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import { Plus, Search, Edit, Trash2 } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
+import { formatLocalInput, parseLocalInputToUTC } from '@/lib/datetime';
 
 interface Customer {
   id: string;
@@ -243,7 +244,8 @@ const Customers = () => {
     const amount = parseFloat(formData.get('amount') as string) || 0;
     const payment_type = (formData.get('payment_type') as 'cash' | 'online' | 'credit') || null;
     const notes = (formData.get('notes') as string) || null;
-    const transaction_date = (formData.get('transaction_date') as string) || new Date().toISOString();
+    const transaction_date_input = (formData.get('transaction_date') as string) || '';
+    const transaction_date = transaction_date_input ? parseLocalInputToUTC(transaction_date_input) : new Date().toISOString();
 
     if (amount <= 0) {
       toast({ variant: 'destructive', title: 'Invalid amount', description: 'Enter a positive payment amount' });
@@ -679,7 +681,7 @@ const Customers = () => {
                       </div>
                       <div className="col-span-2">
                         <Label htmlFor="transaction_date">Date & Time</Label>
-                        <Input id="transaction_date" name="transaction_date" type="datetime-local" defaultValue={new Date().toISOString().slice(0,16)} />
+                        <Input id="transaction_date" name="transaction_date" type="datetime-local" defaultValue={formatLocalInput(new Date())} />
                       </div>
                       <div className="col-span-2">
                         <Label htmlFor="notes">Notes</Label>

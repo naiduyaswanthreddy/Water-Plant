@@ -12,6 +12,7 @@ import { useToast } from '@/hooks/use-toast';
 import { Search, Truck, Check, X, PlusCircle, Loader2 } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { withTimeoutRetry } from '@/lib/supaRequest';
+import { formatLocalInput, parseLocalInputToUTC } from '@/lib/datetime';
 
 interface Customer {
   id: string;
@@ -51,7 +52,7 @@ const Delivery = () => {
   const [dialogType, setDialogType] = useState<'given' | 'extra' | null>(null);
   const [quantity, setQuantity] = useState<number | ''>(1);
   const [bottleType, setBottleType] = useState<'normal' | 'cool'>('normal');
-  const [date, setDate] = useState<string>(() => new Date().toISOString().slice(0, 16));
+  const [date, setDate] = useState<string>(() => formatLocalInput(new Date()));
   const [mode, setMode] = useState<'handover' | 'fill_only'>('handover');
   const [selectedBottleIds, setSelectedBottleIds] = useState<string[]>([]);
   const [withCustomer, setWithCustomer] = useState<Bottle[]>([]);
@@ -365,7 +366,7 @@ const Delivery = () => {
   const resetDialog = () => {
     setQuantity(1);
     setBottleType('normal');
-    setDate(new Date().toISOString().slice(0, 16));
+    setDate(formatLocalInput(new Date()));
     setActiveCustomer(null);
     setDialogType(null);
     setMode('handover');
@@ -382,7 +383,7 @@ const Delivery = () => {
     setDialogType(type);
     setQuantity(1);
     setBottleType('normal');
-    setDate(new Date().toISOString().slice(0, 16));
+    setDate(formatLocalInput(new Date()));
     setMode('handover');
     setSelectedBottleIds([]);
 
@@ -472,7 +473,7 @@ const Delivery = () => {
       }
       // First, process any returns marked from previously held bottles
       if (returnBottleIds.length > 0) {
-        await withTimeoutRetry(() => markReturns(activeCustomer, returnBottleIds, date), { timeoutMs: 10000 });
+        await withTimeoutRetry(() => markReturns(activeCustomer, returnBottleIds, parseLocalInputToUTC(date)), { timeoutMs: 10000 });
       }
       const effAmount = typeof amount === 'number' ? amount : undefined;
       if (mode === 'handover') {
@@ -487,13 +488,13 @@ const Delivery = () => {
           return;
         }
         const result = await withTimeoutRetry(
-          () => assignBottlesDelivery(activeCustomer, selected, bottleType, date, undefined, effAmount),
+          () => assignBottlesDelivery(activeCustomer, selected, bottleType, parseLocalInputToUTC(date), undefined, effAmount),
           { timeoutMs: 10000 }
         );
         setLastAction({ used: false, kind: 'handover', customerId: activeCustomer.id, transactionId: result.transactionId, bottleIds: selected, amount: result.amount });
       } else {
         const result = await withTimeoutRetry(
-          () => upsertDelivery(activeCustomer, qNum, bottleType, date, 'Fill only (no bottle handover)', effAmount),
+          () => upsertDelivery(activeCustomer, qNum, bottleType, parseLocalInputToUTC(date), 'Fill only (no bottle handover)', effAmount),
           { timeoutMs: 10000 }
         );
         if (!result) return; // pricing missing, already toasted
@@ -542,7 +543,7 @@ const Delivery = () => {
       }
       // Process any returns marked from previously held bottles
       if (returnBottleIds.length > 0) {
-        await withTimeoutRetry(() => markReturns(activeCustomer, returnBottleIds, date), { timeoutMs: 10000 });
+        await withTimeoutRetry(() => markReturns(activeCustomer, returnBottleIds, parseLocalInputToUTC(date)), { timeoutMs: 10000 });
       }
       const effAmount = typeof amount === 'number' ? amount : undefined;
       if (mode === 'handover') {
@@ -558,14 +559,14 @@ const Delivery = () => {
           return;
         }
         const result = await withTimeoutRetry(
-          () => assignBottlesDelivery(activeCustomer, selected, bottleType, date, 'Extra', effAmount),
+          () => assignBottlesDelivery(activeCustomer, selected, bottleType, parseLocalInputToUTC(date), 'Extra', effAmount),
           { timeoutMs: 10000 }
         );
         setLastAction({ used: false, kind: 'extra_handover', customerId: activeCustomer.id, transactionId: result.transactionId, bottleIds: selected, amount: result.amount });
       } else {
         // Fill only extra delivery (no bottle handover)
         const result = await withTimeoutRetry(
-          () => upsertDelivery(activeCustomer, qNum, bottleType, date, 'Extra (fill only)', effAmount),
+          () => upsertDelivery(activeCustomer, qNum, bottleType, parseLocalInputToUTC(date), 'Extra (fill only)', effAmount),
           { timeoutMs: 10000 }
         );
         if (!result) return; // pricing missing, already toasted

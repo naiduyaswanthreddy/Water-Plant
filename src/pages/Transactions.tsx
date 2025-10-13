@@ -12,6 +12,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import { Plus, Search, Receipt, TrendingUp, TrendingDown, DollarSign, Trash2 } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
+import { formatLocalInput, parseLocalInputToUTC } from '@/lib/datetime';
 
 interface Transaction {
   id: string;
@@ -296,7 +297,8 @@ const Transactions = () => {
     const bottle_type = (formData.get('bottle_type') as 'normal' | 'cool') || null;
     const payment_type = (formData.get('payment_type') as 'cash' | 'online' | 'credit' | 'not_paid') || null;
     const notes = (formData.get('notes') as string) || null;
-    const transaction_date = (formData.get('transaction_date') as string) || new Date().toISOString();
+    const transaction_date_input = (formData.get('transaction_date') as string) || '';
+    const transaction_date = transaction_date_input ? parseLocalInputToUTC(transaction_date_input) : new Date().toISOString();
     const delivery_mode = (formData.get('delivery_mode') as 'bottle' | 'filling') || 'bottle';
     const amount_input = parseFloat(formData.get('amount') as string);
 
@@ -649,7 +651,7 @@ const Transactions = () => {
                   id="transaction_date"
                   name="transaction_date"
                   type="datetime-local"
-                  defaultValue={new Date().toISOString().slice(0, 16)}
+                  defaultValue={formatLocalInput(new Date())}
                   className="bg-white"
                 />
               </div>
