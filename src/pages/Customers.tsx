@@ -224,7 +224,7 @@ const Customers = () => {
     for (const t of data || []) {
       const amt = Number((t as any).amount) || 0;
       if ((t as any).transaction_type === 'delivery') deliveries += amt;
-      if ((t as any).transaction_type === 'payment') payments += amt;
+      if ((t as any).transaction_type === 'payment' || (t as any).transaction_type === 'discount') payments += amt;
     }
     // Balance is defined as credit: payments - deliveries
     const balance = payments - deliveries;

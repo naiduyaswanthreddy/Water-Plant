@@ -27,14 +27,14 @@ const MainLayout = () => {
     { name: 'Dashboard', href: '/', icon: BarChart3 },
     // 2. Delivery
     { name: 'Delivery', href: '/delivery', icon: Truck },
-    // 3. Shop
-    { name: 'Shop', href: '/shop', icon: ShoppingCart },
+    // 3. Transactions (swapped with Shop)
+    { name: 'Transactions', href: '/transactions', icon: ShoppingCart },
     // 4. Events
     { name: 'Events', href: '/events', icon: Calendar },
     // Continue with the rest in original relative order
     { name: 'Customers', href: '/customers', icon: Users },
     { name: 'Bottles', href: '/bottles', icon: Package },
-    { name: 'Transactions', href: '/transactions', icon: ShoppingCart },
+    { name: 'Shop', href: '/shop', icon: ShoppingCart },
     { name: 'Pricing', href: '/pricing', icon: DollarSign },
     { name: 'Reports', href: '/reports', icon: BarChart3 },
     { name: 'Settings', href: '/settings', icon: Settings },
@@ -42,7 +42,7 @@ const MainLayout = () => {
 
   const bottomNav = [
     { name: 'Delivery', href: '/delivery', icon: Truck },
-    { name: 'Shop', href: '/shop', icon: ShoppingCart },
+    { name: 'Transactions', href: '/transactions', icon: ShoppingCart },
     { name: 'Customers', href: '/customers', icon: Users },
     { name: 'Bottles', href: '/bottles', icon: Package },
   ];

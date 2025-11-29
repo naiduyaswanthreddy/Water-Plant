@@ -17,7 +17,7 @@ import { formatLocalInput, parseLocalInputToUTC } from '@/lib/datetime';
 interface Transaction {
   id: string;
   customer_id: string;
-  transaction_type: 'delivery' | 'payment' | 'return' | 'balance';
+  transaction_type: 'delivery' | 'payment' | 'return' | 'balance' | 'discount';
   quantity?: number;
   amount?: number;
   bottle_type?: 'normal' | 'cool';
@@ -33,7 +33,7 @@ interface Customer {
   id: string;
   name: string;
   pin: string;
-  customer_type?: 'household' | 'shop' | 'function';
+  customer_type?: 'household' | 'shop' | 'function' | 'hotel';
   balance?: number;
 }
 
@@ -42,7 +42,7 @@ interface Customer {
 const Transactions = () => {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
-  const [pricing, setPricing] = useState<Array<{ id: string; bottle_type: 'normal' | 'cool'; customer_type: 'household' | 'shop' | 'function'; price: number }>>([]);
+  const [pricing, setPricing] = useState<Array<{ id: string; bottle_type: 'normal' | 'cool'; customer_type: 'household' | 'shop' | 'function' | 'hotel'; price: number }>>([]);
   // Removed staff state
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
@@ -52,13 +52,14 @@ const Transactions = () => {
   const { user } = useAuth();
 
   // Local form state for auto amount preview
-  const [formType, setFormType] = useState<'delivery' | 'payment' | 'return' | 'balance' | 'all' | string>('delivery');
+  const [formType, setFormType] = useState<'delivery' | 'payment' | 'return' | 'balance' | 'discount' | 'all' | string>('delivery');
   const [formCustomerId, setFormCustomerId] = useState<string>('');
   const [formBottleType, setFormBottleType] = useState<'normal' | 'cool' | ''>('');
   const [formQty, setFormQty] = useState<number>(0);
   const [formDeliveryMode, setFormDeliveryMode] = useState<'bottle' | 'filling'>('bottle');
   const [formAmount, setFormAmount] = useState<number | ''>('');
   const [formPaymentType, setFormPaymentType] = useState<'cash' | 'online' | 'credit' | 'not_paid' | ''>('');
+  const [formAmountPaid, setFormAmountPaid] = useState<number | ''>('');
   const [inStock, setInStock] = useState<Array<{ id: string; bottle_number: string; bottle_type: 'normal' | 'cool' }>>([]);
   const [selectedBottleIds, setSelectedBottleIds] = useState<string[]>([]);
   const [withCustomer, setWithCustomer] = useState<Array<{ id: string; bottle_number: string; bottle_type: 'normal' | 'cool' }>>([]);
@@ -171,7 +172,7 @@ const Transactions = () => {
         return typeof formAmount === 'number' ? formAmount : 0;
       }
     }
-    if (formType === 'balance' || formType === 'payment') {
+    if (formType === 'balance' || formType === 'payment' || formType === 'discount') {
       return typeof formAmount === 'number' ? formAmount : 0;
     }
     return 0;
@@ -221,7 +222,7 @@ const Transactions = () => {
     for (const t of data || []) {
       const amt = (t as any).amount || 0;
       if ((t as any).transaction_type === 'delivery') deliveries += amt;
-      if ((t as any).transaction_type === 'payment') payments += amt;
+      if ((t as any).transaction_type === 'payment' || (t as any).transaction_type === 'discount') payments += amt;
     }
     // Convention: store balance as payments - deliveries (positive = credit)
     const balance = payments - deliveries;
@@ -292,7 +293,7 @@ const Transactions = () => {
     
     const formData = new FormData(e.currentTarget);
     const customer_id = formData.get('customer_id') as string;
-    const transaction_type = formData.get('transaction_type') as 'delivery' | 'payment' | 'return' | 'balance';
+    const transaction_type = formData.get('transaction_type') as 'delivery' | 'payment' | 'return' | 'balance' | 'discount';
     let quantity = parseInt(formData.get('quantity') as string) || 0;
     const bottle_type = (formData.get('bottle_type') as 'normal' | 'cool') || null;
     const payment_type = (formData.get('payment_type') as 'cash' | 'online' | 'credit' | 'not_paid') || null;
@@ -301,6 +302,8 @@ const Transactions = () => {
     const transaction_date = transaction_date_input ? parseLocalInputToUTC(transaction_date_input) : new Date().toISOString();
     const delivery_mode = (formData.get('delivery_mode') as 'bottle' | 'filling') || 'bottle';
     const amount_input = parseFloat(formData.get('amount') as string);
+    const amount_paid_input = parseFloat((formData.get('amount_paid') as string) || '');
+    const amount_paid = isNaN(amount_paid_input) ? (typeof formAmountPaid === 'number' ? formAmountPaid : 0) : amount_paid_input;
 
     // Auto-calc amount based on pricing
     const customer = customers.find(c => c.id === customer_id);
@@ -347,6 +350,12 @@ const Transactions = () => {
         return;
       }
       amount = amount_input;
+    } else if (transaction_type === 'discount') {
+      if (isNaN(amount_input) || amount_input <= 0) {
+        toast({ variant: 'destructive', title: 'Invalid amount', description: 'Enter a positive discount amount' });
+        return;
+      }
+      amount = amount_input;
     }
 
     const storagePaymentType: 'cash' | 'online' | 'credit' | null = payment_type === 'not_paid' ? null : (payment_type as any);
@@ -379,11 +388,44 @@ const Transactions = () => {
         (transactionData as any).bottle_numbers = bottle_numbers;
       }
 
+      // If returning bottles, mark them back to inventory and capture numbers
+      if (transaction_type === 'return') {
+        const { error: updReturnErr } = await supabase
+          .from('bottles')
+          .update({ current_customer_id: null, is_returned: true })
+          .in('id', selectedBottleIds);
+        if (updReturnErr) throw updReturnErr;
+        // Build numbers from withCustomer list
+        const mapRet = new Map<string, { bottle_number: string; bottle_type: 'normal' | 'cool' }>();
+        for (const b of withCustomer) mapRet.set(b.id, { bottle_number: b.bottle_number, bottle_type: b.bottle_type });
+        const bottle_numbers_ret = selectedBottleIds.map(id => mapRet.get(id)?.bottle_number).filter(Boolean) as string[];
+        (transactionData as any).bottle_numbers = bottle_numbers_ret;
+      }
+
       const { error } = await supabase
         .from('transactions')
         .insert(transactionData as any);
       
       if (error) throw error;
+
+      // If amount paid is entered (>0) for delivery or return, also insert a payment transaction
+      if ((transaction_type === 'delivery' || transaction_type === 'return') && (amount_paid || 0) > 0) {
+        const paymentTx = {
+          customer_id,
+          transaction_type: 'payment' as const,
+          quantity: 0,
+          amount: amount_paid || 0,
+          bottle_type: null,
+          payment_type: storagePaymentType,
+          notes: `Payment for ${transaction_type}`,
+          transaction_date,
+          owner_user_id: user!.id,
+        };
+        const { error: payErr } = await supabase
+          .from('transactions')
+          .insert(paymentTx as any);
+        if (payErr) throw payErr;
+      }
       // Recompute balance from transactions to ensure correctness
       if (customer) {
         await recomputeCustomerBalance(customer.id);
@@ -397,6 +439,7 @@ const Transactions = () => {
       fetchData();
       setIsDialogOpen(false);
       setSelectedBottleIds([]);
+      setFormAmountPaid('');
     } catch (error: any) {
       toast({
         variant: "destructive",
@@ -411,13 +454,12 @@ const Transactions = () => {
     return customer ? `${customer.name} (${customer.pin})` : 'Unknown Customer';
   };
 
-  // Removed getStaffName
-
   const getTransactionTypeColor = (type: string) => {
     switch (type) {
       case 'delivery': return 'bg-blue-100 text-blue-800';
       case 'payment': return 'bg-green-100 text-green-800';
       case 'return': return 'bg-yellow-100 text-yellow-800';
+      case 'discount': return 'bg-teal-100 text-teal-800';
       case 'counter_sale': return 'bg-purple-100 text-purple-800';
       case 'function_order': return 'bg-orange-100 text-orange-800';
       default: return 'bg-gray-100 text-gray-800';
@@ -428,6 +470,7 @@ const Transactions = () => {
     switch (type) {
       case 'payment': return TrendingUp;
       case 'return': return TrendingDown;
+      case 'discount': return TrendingUp;
       default: return Receipt;
     }
   };
@@ -518,6 +561,7 @@ const Transactions = () => {
                       <SelectItem value="payment">Payment</SelectItem>
                       <SelectItem value="return">Return</SelectItem>
                       <SelectItem value="balance">Balance</SelectItem>
+                      <SelectItem value="discount">Discount</SelectItem>
                     </SelectContent>
                 </Select>
               </div>
@@ -573,7 +617,6 @@ const Transactions = () => {
                             <div className="text-xs text-muted-foreground">Select a bottle type to see available bottles.</div>
                           )}
                         </div>
-                        <div className="text-xs text-muted-foreground mt-1">Auto total: ₹{computePreviewAmount().toFixed(2)}</div>
                       </div>
                     </div>
                   ) : (
@@ -584,18 +627,24 @@ const Transactions = () => {
                       </div>
                     </div>
                   )}
-                  <div>
-                    <Label htmlFor="payment_type">Payment Type</Label>
-                    <Select name="payment_type" value={formPaymentType} onValueChange={(v) => setFormPaymentType(v as any)}>
-                      <SelectTrigger className="bg-white">
-                        <SelectValue placeholder="Select type" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="not_paid">Not Paid</SelectItem>
-                        <SelectItem value="cash">Cash</SelectItem>
-                        <SelectItem value="online">Online</SelectItem>
-                      </SelectContent>
-                    </Select>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <Label htmlFor="amount_paid_delivery">Amount Paid (₹)</Label>
+                      <Input id="amount_paid_delivery" name="amount_paid" type="number" min="0" step="0.01" value={formAmountPaid === '' ? '' : formAmountPaid} onChange={(e) => setFormAmountPaid(e.target.value === '' ? '' : Number(e.target.value))} className="bg-white" />
+                    </div>
+                    <div>
+                      <Label htmlFor="payment_type">Payment Type</Label>
+                      <Select name="payment_type" value={formPaymentType} onValueChange={(v) => setFormPaymentType(v as any)}>
+                        <SelectTrigger className="bg-white">
+                          <SelectValue placeholder="Select type" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="not_paid">Not Paid</SelectItem>
+                          <SelectItem value="cash">Cash</SelectItem>
+                          <SelectItem value="online">Online</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
                   </div>
                 </>
               )}
@@ -606,6 +655,10 @@ const Transactions = () => {
                     <div>
                       <Label htmlFor="quantity">Quantity</Label>
                       <Input id="quantity" name="quantity" type="number" min="0" value={selectedBottleIds.length} readOnly className="bg-white" />
+                    </div>
+                    <div>
+                      <Label htmlFor="amount_paid_return">Amount Paid (₹)</Label>
+                      <Input id="amount_paid_return" name="amount_paid" type="number" min="0" step="0.01" value={formAmountPaid === '' ? '' : formAmountPaid} onChange={(e) => setFormAmountPaid(e.target.value === '' ? '' : Number(e.target.value))} className="bg-white" />
                     </div>
                   </div>
                   <div>
@@ -627,6 +680,19 @@ const Transactions = () => {
                       )}
                     </div>
                   </div>
+                  <div>
+                    <Label htmlFor="payment_type_return">Payment Type</Label>
+                    <Select name="payment_type" value={formPaymentType} onValueChange={(v) => setFormPaymentType(v as any)}>
+                      <SelectTrigger className="bg-white">
+                        <SelectValue placeholder="Select type" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="not_paid">Not Paid</SelectItem>
+                        <SelectItem value="cash">Cash</SelectItem>
+                        <SelectItem value="online">Online</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
                 </div>
               )}
 
@@ -639,8 +705,20 @@ const Transactions = () => {
                 </div>
               )}
 
+              {formType === 'discount' && (
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="col-span-2">
+                    <Label htmlFor="amount">Discount Amount (₹)</Label>
+                    <Input id="amount" name="amount" type="number" min="0" step="0.01" value={formAmount === '' ? '' : formAmount} onChange={(e) => setFormAmount(e.target.value === '' ? '' : Number(e.target.value))} className="bg-white" />
+                  </div>
+                </div>
+              )}
+
               {formType === 'delivery' && formDeliveryMode === 'bottle' && (
-                <div className="text-sm text-muted-foreground">Auto total: ₹{computePreviewAmount().toFixed(2)}</div>
+                <div className="space-y-1">
+                  <div className="text-sm text-muted-foreground">Auto total: ₹{computePreviewAmount().toFixed(2)}</div>
+                  <div className="text-base font-semibold">Amount Paid: ₹{Number(formAmountPaid || 0).toFixed(2)}</div>
+                </div>
               )}
               
               {/* Staff selection removed */}
@@ -694,6 +772,7 @@ const Transactions = () => {
             <SelectItem value="delivery">Delivery</SelectItem>
             <SelectItem value="payment">Payment</SelectItem>
             <SelectItem value="return">Return</SelectItem>
+            <SelectItem value="discount">Discount</SelectItem>
             <SelectItem value="counter_sale">Counter Sale</SelectItem>
             <SelectItem value="function_order">Function Order</SelectItem>
           </SelectContent>
@@ -755,6 +834,11 @@ const Transactions = () => {
                 {transaction.notes && (
                   <div className="mt-2 text-sm text-muted-foreground">
                     {transaction.notes}
+                  </div>
+                )}
+                {transaction.transaction_type === 'return' && transaction.bottle_numbers && transaction.bottle_numbers.length > 0 && (
+                  <div className="mt-2 text-sm">
+                    <span className="text-muted-foreground">Returned:</span> {transaction.bottle_numbers.join(', ')}
                   </div>
                 )}
                 
