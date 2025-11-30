@@ -192,8 +192,15 @@ const Transactions = () => {
       if (pricingResult.error) throw pricingResult.error;
       if (inStockRes.error) throw inStockRes.error;
       
-
-      setTransactions(transactionsResult.data || []);
+      // Map stored discount-as-payment rows back to 'discount' for UI/filtering
+      const mappedTx = (transactionsResult.data || []).map((tx: any) => {
+        const notes: string = (tx.notes || '').toString().toLowerCase();
+        if (tx.transaction_type === 'payment' && notes.startsWith('discount')) {
+          return { ...tx, transaction_type: 'discount' } as any;
+        }
+        return tx as any;
+      });
+      setTransactions(mappedTx);
       setCustomers(customersResult.data || []);
       setPricing(pricingResult.data || []);
       setInStock((inStockRes.data || []) as any);
@@ -360,14 +367,25 @@ const Transactions = () => {
 
     const storagePaymentType: 'cash' | 'online' | 'credit' | null = payment_type === 'not_paid' ? null : (payment_type as any);
     const extraNotes = transaction_type === 'delivery' && payment_type === 'not_paid' ? (notes ? `${notes} • Not paid` : 'Not paid') : notes;
+    // Persist-safe mapping: 'balance' -> 'delivery', 'discount' -> 'payment' (DB enum)
+    const storeType: 'delivery' | 'payment' | 'return' =
+      transaction_type === 'balance' ? 'delivery' : (transaction_type === 'discount' ? 'payment' : transaction_type);
+    const discountNotes = notes ? `Discount: ${notes}` : 'Discount';
+    const finalNotes =
+      transaction_type === 'balance'
+        ? (notes ? `Balance: ${notes}` : 'Balance adjustment')
+        : (transaction_type === 'discount' ? discountNotes : extraNotes);
+    const effectivePaymentType: 'cash' | 'online' | 'credit' | null =
+      transaction_type === 'discount' ? null : storagePaymentType;
+
     const transactionData = {
       customer_id,
-      transaction_type: transaction_type === 'balance' ? 'delivery' : transaction_type, // store as delivery for compatibility
+      transaction_type: storeType, // store mapped enum accepted by DB
       quantity,
       amount,
       bottle_type,
-      payment_type: storagePaymentType,
-      notes: transaction_type === 'balance' ? (notes ? `Balance: ${notes}` : 'Balance adjustment') : extraNotes,
+      payment_type: effectivePaymentType,
+      notes: finalNotes,
       transaction_date,
       owner_user_id: user!.id,
     };
